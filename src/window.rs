@@ -39,12 +39,15 @@ impl Window {
         })
     }
     pub fn new(title: &str, event_queue: EventQueue) -> Self {
+        // We can set this to None for release builds
+        let layers = vec!["VK_LAYER_LUNARG_standard_validation"];
         let instance =
-            vulkano::instance::Instance::new(None, &vulkano_win::required_extensions(), None)
+            vulkano::instance::Instance::new(None, &vulkano_win::required_extensions(), layers)
                 .expect("Vulkan is not available on your system!");
 
         let evloop = winit::EventsLoop::new();
         let surface = winit::WindowBuilder::new()
+            .with_fullscreen(Some(evloop.get_primary_monitor()))
             .with_title(title)
             .build_vk_surface(&evloop, Arc::clone(&instance))
             .unwrap();
@@ -53,6 +56,7 @@ impl Window {
             println!("Failed to grab cursor. If you're on wayland, try setting the environment variable WINIT_UNIX_BACKEND=x11.\nLaunching without grabbed cursor...");
         }
         window.hide_cursor(true);
+
         // window.set_fullscreen(Some(window.get_current_monitor()));
 
         let (device, queue, caps) =
@@ -108,7 +112,9 @@ impl Window {
             };
 
         let (swapchain, images) = {
-            let usage = caps.supported_usage_flags;
+            let mut usage = caps.supported_usage_flags;
+            // Validation layers are complaining
+            usage.storage = false;
             let alpha = caps.supported_composite_alpha.iter().next().unwrap();
             let format = caps.supported_formats[0].0;
 
@@ -284,6 +290,11 @@ impl Window {
                 _ => {}
             }
         }
+        // Keep the cursor in the window
+        self.surface
+            .window()
+            .set_cursor_position(winit::dpi::LogicalPosition::new(0.0, 0.0))
+            .unwrap();
 
         if let Some(size) = resize {
             let size = size.to_physical(self.surface.window().get_hidpi_factor());

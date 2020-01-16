@@ -1,5 +1,4 @@
 /// The event system for both client and server
-
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
