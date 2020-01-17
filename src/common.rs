@@ -8,7 +8,7 @@ pub fn radians(degrees: f32) -> f32 {
 
 pub fn world_to_chunk(w: Vector3<f32>) -> Vector3<i32> {
     let a = w.map(|w| if w < 0.0 { 1 } else { 0 });
-    (w.map(|x| x as i32)) / 14 - a
+    w.map(|x| x as i32) / 14 - a
 }
 pub fn chunk_to_world(c: Vector3<i32>) -> Vector3<f32> {
     c.map(|x| x as f32 + 0.5) * 14.0

@@ -136,11 +136,11 @@ fn main() {
     }
 
     let chunk_buf = CpuBufferPool::upload(win.device());
-    let v: Vec<_> = (0..16)
+    let mut chunk_map: Vec<_> = (0..16)
         .flat_map(|x| (0..16).map(move |y| (x, y)))
         .flat_map(|(x, y)| (0..16).map(move |z| (x, y, z)))
-        .flat_map(|(x, y, z)| {
-            vec![
+        .map(|(x, y, z)| {
+            [
                 (x * 16) as u16 + 1,
                 (y * 16) as u16 + 1,
                 (z * 16) as u16 + 1,
@@ -148,21 +148,24 @@ fn main() {
             ]
         })
         .collect();
-    let b = chunk_buf.chunk(v).unwrap();
-    let cmd = AutoCommandBufferBuilder::primary_one_time_submit(win.device(), win.queue.family())
-        .unwrap()
-        // Overwrite the whole first cascade
-        .copy_buffer_to_image_dimensions(b, chunks.clone(), [0, 0, 0], [16, 16, 16], 0, 1, 0)
-        .unwrap()
-        .build()
-        .unwrap();
-    future = Box::new(future.then_execute(win.queue.clone(), cmd).unwrap());
-    future
-        .then_signal_fence_and_flush()
-        .unwrap()
-        .wait(None)
-        .unwrap();
-    future = Box::new(vulkano::sync::now(win.device()));
+
+    {
+        let b = chunk_buf.chunk(chunk_map.clone()).unwrap();
+        let cmd = AutoCommandBufferBuilder::primary_one_time_submit(win.device(), win.queue.family())
+            .unwrap()
+            // Overwrite the whole first cascade
+            .copy_buffer_to_image_dimensions(b, chunks.clone(), [0, 0, 0], [16, 16, 16], 0, 1, 0)
+            .unwrap()
+            .build()
+            .unwrap();
+        future = Box::new(future.then_execute(win.queue.clone(), cmd).unwrap());
+        future
+            .then_signal_fence_and_flush()
+            .unwrap()
+            .wait(None)
+            .unwrap();
+        future = Box::new(vulkano::sync::now(win.device()));
+    }
 
     let desc = Arc::new(
         PersistentDescriptorSet::start(pipeline.clone(), 0)
@@ -175,6 +178,7 @@ fn main() {
     );
 
     let mut cam = camera::Camera::new(win.size());
+    let mut last_chunk = world_to_chunk(Vector3::new(cam.pos.x, cam.pos.y, cam.pos.z));
 
     let mut recreate_swapchain = false;
     let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into(), 1.0.into()];
@@ -253,6 +257,85 @@ fn main() {
                 println!("{:?}", err);
                 future = Box::new(vulkano::sync::now(win.device())) as Box<_>;
             }
+        }
+
+        let chunk = world_to_chunk(Vector3::new(cam.pos.x, cam.pos.y, cam.pos.z));
+        if chunk != last_chunk {
+            future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+            future = Box::new(vulkano::sync::now(win.device()));
+            let dif = chunk - last_chunk;
+            let i = dif.iamax();
+            let mut s = Vector3::zeros();
+            s[i] = dif[i];
+            println!("Loading chunks in direction {:?}", s);
+            let start = cam.start + s;
+            let mut new_chunks = chunk_map.clone();
+            for x in 0..16 {
+                for y in 0..16 {
+                    for z in 0..16 {
+                        let v = Vector3::new(x, y, z);
+                        let world_pos = start + v;
+
+                        // The index of this chunk in the old chunk index
+                        let old_v = v + s;
+
+                        if old_v.min() >= 0 && old_v.max() < 16 {
+                            // It's already in blocks, so just change the offset
+                            new_chunks[(x + y*16 + z*16*16) as usize] = chunk_map[(old_v.x + 16*old_v.y + 16*16*old_v.z) as usize];
+                        } else {
+                            // It's out of bounds, we need to make a new chunk and delete the old one
+
+                            // Wrap the coordinates around. If it's `-1`, this will be `15`;
+                            //  if it's `16`, this will be `32 % 16 = 0`.
+                            //  And if it's something else, it won't change
+                            let old_v = old_v.map(|x| (x + 16) % 16);
+
+                            // A now-unnocupied chunk
+                            let slot = chunk_map[(old_v.x + 16*old_v.y + 16*16*old_v.z) as usize];
+                            new_chunks[(x + y*16 + z*16*16) as usize] = slot;
+
+                            // Generate a new chunk and add it to blocks
+                            let c = gen::gen_chunk(world_pos.zyx());
+                            let b = block_buf.chunk(c).unwrap();
+                            let cmd = AutoCommandBufferBuilder::primary_one_time_submit(
+                                win.device(),
+                                win.queue.family(),
+                            )
+                            .unwrap()
+                            .copy_buffer_to_image_dimensions(
+                                b,
+                                blocks.clone(),
+                                // - 1 to compensate for the lip
+                                [slot[0] as u32 - 1, slot[1] as u32 - 1, slot[2] as u32 - 1],
+                                [16, 16, 16],
+                                0,
+                                1,
+                                0,
+                            )
+                            .unwrap()
+                            .build().unwrap();
+                            future = Box::new(future.then_execute(win.queue.clone(), cmd).unwrap());
+                        }
+                    }
+                }
+            }
+            println!("Loaded chunks, uploading to GPU");
+            chunk_map = new_chunks.clone();
+            let buf = chunk_buf.chunk(new_chunks).unwrap();
+            let cmd = AutoCommandBufferBuilder::primary_one_time_submit(
+                win.device(),
+                win.queue.family(),
+            )
+            .unwrap()
+                .copy_buffer_to_image_dimensions(buf, chunks.clone(), [0, 0, 0], [16, 16, 16], 0, 1, 0).unwrap()
+                .build().unwrap();
+                future = Box::new(future.then_execute(win.queue.clone(), cmd).unwrap());
+
+                    future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                    future = Box::new(vulkano::sync::now(win.device()));
+            cam.start = start;
+
+            last_chunk = chunk;
         }
 
         win.update();
