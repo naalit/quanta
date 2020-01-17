@@ -3,7 +3,7 @@ use crate::event::*;
 use crate::shaders::PushConstants;
 
 /// In m/s
-pub const MOVE_SPEED: f32 = 1.0;
+pub const MOVE_SPEED: f32 = 10.0;
 
 pub struct Camera {
     fov: f32,
@@ -85,7 +85,7 @@ impl Camera {
             Event::Mouse(x, y) => {
                 self.rx -= x / self.resolution.0;
                 self.ry += y / self.resolution.1;
-                self.ry = na::clamp(self.ry, -1.0, 1.0);
+                self.ry = na::clamp(self.ry, 0.01-std::f64::consts::FRAC_PI_2, -0.01+std::f64::consts::FRAC_PI_2);
                 self.dir = na::UnitQuaternion::from_axis_angle(
                     &na::Unit::new_unchecked(na::Vector3::y()),
                     self.rx as f32,

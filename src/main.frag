@@ -20,8 +20,8 @@ layout(set=0,binding=1) uniform sampler3D blocks;
 
 ivec3 world_to_chunk(vec3 w) {
   // a = if w < 0.0 { 1 } else { 0 }
-  ivec3 a = ivec3((sign(w)-1.0)*0.5);
-  return (ivec3(w) + a) / 14 + a;
+  ivec3 a = 1 - ivec3(step(0.0, w));
+  return (ivec3(w)) / 14 - a;
 }
 vec3 chunk_to_world(ivec3 c) {
   return (vec3(c) + 0.5) * 14.0;
@@ -41,12 +41,20 @@ bool trace(in vec3 ro, in vec3 rd, in float tanW, out float t) {
   vec3 in_chunk = pos_in_chunk(p);
   vec3 i_size = 1.0 / vec3(textureSize(blocks, 0).xyz);
 
+  float candidate_t = 0.2;
+  float candidate_dt = 1000000.0;
+
   for (int it = 0; it < 256; it++) {
     float d = texture(blocks, (offset + in_chunk) * i_size).r * 14.0;
     t += d;
-    if (d <= 1.0)//t * tanW)
+    if (d <= 0.01)//t * tanW)
       return true;
     in_chunk += rd * d;
+
+    if (d / t < candidate_dt) {
+      candidate_dt = d / t;
+      candidate_t = t;
+    }
 
     // Maybe advance chunk
     if (any(greaterThanEqual(in_chunk, vec3(14.0))) || any(lessThan(in_chunk, vec3(0.0)))) {
@@ -58,7 +66,7 @@ bool trace(in vec3 ro, in vec3 rd, in float tanW, out float t) {
       vec3 t2 = (mx-ro) * i_rd;
       vec3 tmax = max(t1, t2);
 
-      t = 0.01 + min(tmax.x, min(tmax.y, tmax.z));
+      t = 0.001 + min(tmax.x, min(tmax.y, tmax.z));
       p = ro + t * rd;
       chunk = world_to_chunk(p) - start;
 
@@ -69,7 +77,8 @@ bool trace(in vec3 ro, in vec3 rd, in float tanW, out float t) {
       in_chunk = pos_in_chunk(p);
     }
   }
-  return false;
+  t = candidate_t;
+  return true;
 }
 
 bool trace_(in vec3 ro, in vec3 rd, in float tanW, out float t) {
@@ -121,7 +130,7 @@ void main() {
   rd = normalize(rd);
 
   float w = acos(dot(rd, camera_dir));
-  w = dFdy(w);
+  w = abs(dFdy(w));
   float tanW = tan(w);
 
   float t;

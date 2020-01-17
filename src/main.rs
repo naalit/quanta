@@ -72,7 +72,7 @@ fn main() {
         Dimensions::Dim3d {
             width: 256,
             height: 256,
-            depth: 1024,
+            depth: 256,//1024,
         },
         vulkano::format::R8Unorm,
         ImageUsage {

@@ -18,8 +18,9 @@ pub fn gen_chunk(pos: Vector3<i32>) -> Vec<u8> {
         .flat_map(|(x, y)| (0..16).map(move |z| (x, y, z)))
         .map(|(x, y, z)| {
             let p = start + Vector3::new(x as f32 - 1.0, y as f32 - 1.0, z as f32 - 1.0);
-            let h = -1.0 + 10.0 * noise.get([p.x as f64 * 0.004, p.z as f64 * 0.004]) as f32;
-            let f = (p.y - h) * 0.7;
+            let h = -1.0 + 7.0 * noise.get([p.x as f64 * 0.004, p.z as f64 * 0.004]) as f32;
+
+            let f = (p.y - h) * 0.60;
             let f = (f / 14.0).min(1.0).max(0.0) * 255.0;
             f as u8
         })
