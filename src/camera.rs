@@ -4,6 +4,7 @@ use crate::shaders::PushConstants;
 
 /// In m/s
 pub const MOVE_SPEED: f32 = 10.0;
+pub const SENSITIVITY: f64 = 2.0;
 
 pub struct Camera {
     fov: f32,
@@ -85,8 +86,8 @@ impl Camera {
                 self.moving.x = 0.0;
             }
             Event::Mouse(x, y) => {
-                self.rx -= x / self.resolution.0;
-                self.ry += y / self.resolution.1;
+                self.rx -= SENSITIVITY * x / self.resolution.0;
+                self.ry += SENSITIVITY * y / self.resolution.1;
                 self.ry = na::clamp(
                     self.ry,
                     0.01 - std::f64::consts::FRAC_PI_2,
