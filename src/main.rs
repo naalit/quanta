@@ -10,12 +10,12 @@ use vulkano::sync::GpuFuture;
 use std::sync::Arc;
 
 mod camera;
+mod chunks;
 mod common;
 mod event;
 mod gen;
 mod shaders;
 mod window;
-mod chunks;
 use common::*;
 
 fn main() {
@@ -191,7 +191,7 @@ fn main() {
     let mut last_chunk = world_to_chunk(Vector3::new(cam.pos.x, cam.pos.y, cam.pos.z));
 
     let mut recreate_swapchain = false;
-    let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into(), 1.0.into()];
+    let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into()];
 
     let mut timer = stopwatch::Stopwatch::start_new();
 
@@ -281,12 +281,12 @@ fn main() {
         }
 
         if let Ok(update) = recv.try_recv() {
-            // future
-            //     .then_signal_fence_and_flush()
-            //     .unwrap()
-            //     .wait(None)
-            //     .unwrap();
-            // future = Box::new(vulkano::sync::now(win.device()));
+            future
+                .then_signal_fence_and_flush()
+                .unwrap()
+                .wait(None)
+                .unwrap();
+            future = Box::new(vulkano::sync::now(win.device()));
 
             for (loc, data) in update.blocks {
                 let b = block_buf.chunk(data).unwrap();
@@ -295,15 +295,7 @@ fn main() {
                     win.queue.family(),
                 )
                 .unwrap()
-                .copy_buffer_to_image_dimensions(
-                    b,
-                    blocks.clone(),
-                    loc,
-                    [16, 16, 16],
-                    0,
-                    1,
-                    0,
-                )
+                .copy_buffer_to_image_dimensions(b, blocks.clone(), loc, [16, 16, 16], 0, 1, 0)
                 .unwrap()
                 .build()
                 .unwrap();
@@ -328,15 +320,11 @@ fn main() {
                     .build()
                     .unwrap();
             future = Box::new(future.then_execute(win.queue.clone(), cmd).unwrap());
-            let f = future
-                .then_signal_fence_and_flush()
-                .unwrap();
+            let f = future.then_signal_fence_and_flush().unwrap();
 
             cam.start = update.start;
 
-            f
-                .wait(None)
-                .unwrap();
+            f.wait(None).unwrap();
             future = Box::new(vulkano::sync::now(win.device()));
         }
 

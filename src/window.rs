@@ -154,17 +154,11 @@ impl Window {
                         store: Store,
                         format: swapchain.format(),
                         samples: 1,
-                    },
-                    depth: {
-                        load: Clear,
-                        store: DontCare,
-                        format: vulkano::format::Format::D32Sfloat,
-                        samples: 1,
                     }
                 },
                 pass: {
                     color: [color],
-                    depth_stencil: {depth}
+                    depth_stencil: {}
                 }
             }
             .unwrap(),
@@ -326,15 +320,15 @@ impl Window {
                     vulkano::framebuffer::Framebuffer::start(Arc::clone(&rpass))
                         .add(Arc::clone(&image))
                         .unwrap()
-                        .add(
-                            vulkano::image::AttachmentImage::transient(
-                                Arc::clone(&device),
-                                size,
-                                vulkano::format::Format::D32Sfloat,
-                            )
-                            .unwrap(),
-                        )
-                        .unwrap()
+                        // .add(
+                        //     vulkano::image::AttachmentImage::transient(
+                        //         Arc::clone(&device),
+                        //         size,
+                        //         vulkano::format::Format::D32Sfloat,
+                        //     )
+                        //     .unwrap(),
+                        // )
+                        // .unwrap()
                         .build()
                         .unwrap(),
                 )

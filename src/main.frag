@@ -14,6 +14,7 @@ layout(push_constant) uniform PushConstants {
 };
 // A chunk is 14x14, but we store a 1-voxel lip around it so it takes up 16x16 of texture space
 // chunks stores texel offsets of 16x16x64 chunks - 16^3 for each cascade - after the lip
+// An offset of (8192, 8192, 8192) is an empty chunk
 layout(set=0,binding=0) uniform usampler3D chunks;
 layout(set=0,binding=1) uniform sampler3D blocks;
 
@@ -58,22 +59,25 @@ bool trace(in vec3 ro, in vec3 rd, in float tanW, out float t) {
 
     // Maybe advance chunk
     if (any(greaterThanEqual(in_chunk, vec3(14.0))) || any(lessThan(in_chunk, vec3(0.0)))) {
-      // Intersect ray with this chunk
-      vec3 c = chunk_to_world(chunk + start);
-      vec3 mn = c - 7.0;
-      vec3 mx = c + 7.0;
-      vec3 t1 = (mn-ro) * i_rd;
-      vec3 t2 = (mx-ro) * i_rd;
-      vec3 tmax = max(t1, t2);
+      do {
+        // Intersect ray with this chunk
+        vec3 c = chunk_to_world(chunk + start);
+        vec3 mn = c - 7.0;
+        vec3 mx = c + 7.0;
+        vec3 t1 = (mn-ro) * i_rd;
+        vec3 t2 = (mx-ro) * i_rd;
+        vec3 tmax = max(t1, t2);
 
-      t = 0.001 + min(tmax.x, min(tmax.y, tmax.z));
-      p = ro + t * rd;
-      chunk = world_to_chunk(p) - start;
+        t = 0.001 + min(tmax.x, min(tmax.y, tmax.z));
+        p = ro + t * rd;
+        chunk = world_to_chunk(p) - start;
 
-      if (any(greaterThanEqual(chunk, ivec3(16))) || any(lessThan(chunk, ivec3(0))))
-        return false;
+        if (any(greaterThanEqual(chunk, ivec3(16))) || any(lessThan(chunk, ivec3(0))))
+          return false;
 
-      offset = vec3(texelFetch(chunks, chunk, 0).xyz);
+        offset = vec3(texelFetch(chunks, chunk, 0).xyz);
+        // Skip empty chunks, but avoid looping infinitely
+      } while (offset.x == 8192 && it++ < 256);
       in_chunk = pos_in_chunk(p);
     }
   }

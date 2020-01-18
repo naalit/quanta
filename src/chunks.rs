@@ -1,6 +1,8 @@
+use crate::common::*;
 /// A background thread that loads chunks and sends them to the client thread
 use std::sync::mpsc::*;
-use crate::common::*;
+
+const BATCH_MAX_SIZE: usize = 64;
 
 pub struct ChunkUpdate {
     pub start: Vector3<i32>,
@@ -13,12 +15,15 @@ pub struct ChunkThread {
 }
 impl ChunkThread {
     pub fn new(send: Sender<ChunkUpdate>, recv: Receiver<Vector3<i32>>) -> Self {
-        ChunkThread {
-            ch: (send, recv),
-        }
+        ChunkThread { ch: (send, recv) }
     }
 
-    pub fn run(self, mut start: Vector3<i32>, mut last_chunk: Vector3<i32>, mut chunks: Vec<[u16; 4]>) {
+    pub fn run(
+        self,
+        mut start: Vector3<i32>,
+        mut last_chunk: Vector3<i32>,
+        mut chunks: Vec<[u16; 4]>,
+    ) {
         while let Ok(chunk) = self.ch.1.recv() {
             let dif = chunk - last_chunk;
             let i = dif.iamax();
@@ -28,7 +33,8 @@ impl ChunkThread {
             let new_start = start + s;
             let mut new_chunks = chunks.clone();
 
-            let mut blocks = Vec::new();
+            //let mut blocks = Vec::new();
+            let mut to_gen = Vec::new();
 
             for x in 0..16 {
                 for y in 0..16 {
@@ -54,31 +60,48 @@ impl ChunkThread {
                             // A now-unnocupied chunk
                             let slot =
                                 chunks[(old_v.x + 16 * old_v.y + 16 * 16 * old_v.z) as usize];
-                            new_chunks[(x + y * 16 + z * 16 * 16) as usize] = slot;
+                            // It's empty for now
+                            new_chunks[(x + y * 16 + z * 16 * 16) as usize] = [8192; 4];
 
-                            // Generate a new chunk and add it to blocks
-                            let c = crate::gen::gen_chunk(world_pos.zyx());
-                            blocks.push((
-                                // - 1 to compensate for the lip
-                                [slot[0] as u32 - 1, slot[1] as u32 - 1, slot[2] as u32 - 1],
-                                c,
+                            to_gen.push((
+                                (x + y * 16 + z * 16 * 16) as usize,
+                                slot,
+                                world_pos.zyx(),
                             ));
                         }
                     }
                 }
             }
             println!("Loaded chunks, sending to client");
-            chunks = new_chunks.clone();
-
-            let update = ChunkUpdate {
-                start: new_start,
-                chunks: new_chunks,
-                blocks,
-            };
-            self.ch.0.send(update).unwrap();
-
+            chunks = new_chunks;
             start = new_start;
             last_chunk = chunk;
+
+            while !to_gen.is_empty() {
+                let blocks = to_gen
+                    .drain(0..BATCH_MAX_SIZE.min(to_gen.len()))
+                    .map(|(chunk_slot, block_slot, world_pos)| {
+                        let chunk = crate::gen::gen_chunk(world_pos);
+
+                        chunks[chunk_slot] = block_slot;
+
+                        (
+                            [
+                                block_slot[0] as u32 - 1,
+                                block_slot[1] as u32 - 1,
+                                block_slot[2] as u32 - 1,
+                            ],
+                            chunk,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let update = ChunkUpdate {
+                    start,
+                    chunks: chunks.clone(),
+                    blocks,
+                };
+                self.ch.0.send(update).unwrap();
+            }
         }
     }
 }
