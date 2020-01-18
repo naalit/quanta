@@ -45,7 +45,7 @@ bool trace(in vec3 ro, in vec3 rd, in float tanW, out float t) {
   float candidate_dt = 1000000.0;
 
   for (int it = 0; it < 256; it++) {
-    float d = texture(blocks, (offset + in_chunk) * i_size).r * 14.0;
+    float d = texture(blocks, (offset + in_chunk) * i_size).r * 16.0 - 2.0;
     t += d;
     if (d <= 0.01)//t * tanW)
       return true;

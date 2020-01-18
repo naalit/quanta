@@ -21,7 +21,7 @@ pub fn gen_chunk(pos: Vector3<i32>) -> Vec<u8> {
             let h = -1.0 + 7.0 * noise.get([p.x as f64 * 0.004, p.z as f64 * 0.004]) as f32;
 
             let f = (p.y - h) * 0.6;
-            let f = (f / 14.0).min(1.0).max(0.0) * 255.0;
+            let f = ((f + 2.0) / 16.0).min(1.0).max(0.0) * 255.0;
             f as u8
         })
         .collect()
