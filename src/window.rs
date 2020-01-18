@@ -59,57 +59,56 @@ impl Window {
 
         // window.set_fullscreen(Some(window.get_current_monitor()));
 
-        let (device, queue, caps) =
-            {
-                let mut devices = vulkano::instance::PhysicalDevice::enumerate(&instance);
-                let device = if devices.len() == 0 {
-                    panic!("No hardware on your system supports Vulkan!")
-                } else if devices.len() == 1 {
-                    devices.next().unwrap()
-                } else {
-                    use std::io::Write;
+        let (device, queue, caps) = {
+            let mut devices = vulkano::instance::PhysicalDevice::enumerate(&instance);
+            let device = if devices.len() == 0 {
+                panic!("No hardware on your system supports Vulkan!")
+            } else if devices.len() == 1 {
+                devices.next().unwrap()
+            } else {
+                use std::io::Write;
 
-                    println!("Available devices: \n");
-                    for (i, device) in devices.enumerate() {
-                        println!("\t{}. {}\n", i, device.name());
-                    }
-                    print!("Please select a device by index: ");
-                    std::io::stdout().flush().unwrap();
+                println!("Available devices: \n");
+                for (i, device) in devices.enumerate() {
+                    println!("\t{}. {}\n", i, device.name());
+                }
+                print!("Please select a device by index: ");
+                std::io::stdout().flush().unwrap();
 
-                    let mut s = String::new();
-                    std::io::stdin().read_line(&mut s).unwrap();
-                    let i: usize = s.trim().parse().expect("That's not a valid number");
-                    vulkano::instance::PhysicalDevice::from_index(&instance, i)
-                        .expect("No device with that index")
-                };
-
-                println!("Selected device: {}", device.name());
-
-                // TODO if no families support compute, pick a graphics one and disable graphics options that require compute shaders
-                // TODO separate graphics, transfer, and maybe compute queues
-                let queue_family = device
-            .queue_families()
-            .find(|&q| {
-                q.supports_graphics()
-                    && q.supports_compute()
-                    && surface.is_supported(q).unwrap_or(false)
-            })
-            .expect("No queue families that support graphics, compute, and drawing to the window");
-
-                let caps = surface.capabilities(device).unwrap();
-
-                let (device, mut queues) = vulkano::device::Device::new(
-                    device,
-                    &vulkano::device::Features::none(),
-                    &vulkano::device::DeviceExtensions {
-                        khr_swapchain: true,
-                        ..vulkano::device::DeviceExtensions::none()
-                    },
-                    [(queue_family, 0.5)].iter().cloned(),
-                )
-                .expect("Failed to create device");
-                (device, queues.next().unwrap(), caps)
+                let mut s = String::new();
+                std::io::stdin().read_line(&mut s).unwrap();
+                let i: usize = s.trim().parse().expect("That's not a valid number");
+                vulkano::instance::PhysicalDevice::from_index(&instance, i)
+                    .expect("No device with that index")
             };
+
+            println!("Selected device: {}", device.name());
+
+            // TODO if no families support compute, pick a graphics one and disable graphics options that require compute shaders
+            // TODO separate graphics, transfer, and maybe compute queues
+            let queue_family = device
+                .queue_families()
+                .find(|&q| {
+                    q.supports_graphics()
+                        && q.supports_compute()
+                        && surface.is_supported(q).unwrap_or(false)
+                })
+                .expect("No queue families that support graphics, compute, and drawing to the window");
+
+            let caps = surface.capabilities(device).unwrap();
+
+            let (device, mut queues) = vulkano::device::Device::new(
+                device,
+                &vulkano::device::Features::none(),
+                &vulkano::device::DeviceExtensions {
+                    khr_swapchain: true,
+                    ..vulkano::device::DeviceExtensions::none()
+                },
+                [(queue_family, 0.5)].iter().cloned(),
+            )
+            .expect("Failed to create device");
+            (device, queues.next().unwrap(), caps)
+        };
 
         let (swapchain, images) = {
             let mut usage = caps.supported_usage_flags;
@@ -190,10 +189,6 @@ impl Window {
             queue,
             event_queue,
         }
-    }
-
-    pub fn aspect(&self) -> f32 {
-        self.size.width as f32 / self.size.height as f32
     }
 
     pub fn size(&self) -> (f64, f64) {
