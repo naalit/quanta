@@ -38,6 +38,10 @@ impl Camera {
         }
     }
 
+    pub fn pos(&self) -> Vector3<f32> {
+        Vector3::new(self.pos.x, self.pos.y, self.pos.z)
+    }
+
     pub fn update(&mut self, delta: f64) {
         // self.up is the CAMERA up, but jumping moves up in the WORLD
         let up = Vector3::y();
@@ -46,18 +50,18 @@ impl Camera {
         self.pos += self.dir.cross(&up).normalize() * self.moving.x * delta as f32 * MOVE_SPEED;
     }
 
-    pub fn push(&self) -> PushConstants {
+    pub fn push(&self, origin: [f32; 3], root_size: f32) -> PushConstants {
         PushConstants {
             fov: self.fov,
             resolution: [self.resolution.0 as f32, self.resolution.1 as f32],
             camera_pos: [self.pos.x, self.pos.y, self.pos.z],
             camera_dir: self.dir.into(),
             camera_up: self.up.into(),
-            start: self.start.into(),
+            origin,
+            root_size,
             _dummy0: [0; 4],
             _dummy1: [0; 4],
             _dummy2: [0; 4],
-            _dummy3: [0; 4],
         }
     }
 

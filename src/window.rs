@@ -102,6 +102,7 @@ impl Window {
                 &vulkano::device::Features::none(),
                 &vulkano::device::DeviceExtensions {
                     khr_swapchain: true,
+                    khr_storage_buffer_storage_class: true,
                     ..vulkano::device::DeviceExtensions::none()
                 },
                 [(queue_family, 0.5)].iter().cloned(),
