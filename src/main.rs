@@ -66,6 +66,6 @@ fn main() {
         server.run();
     });
 
-    let client = client::Client::new(queue, conn_client);
+    let client = client::Client::new(queue, conn_client, client_config);
     client.game_loop();
 }

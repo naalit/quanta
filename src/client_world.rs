@@ -1,11 +1,16 @@
 use vulkano::sync::GpuFuture;
 use crate::common::*;
 use std::collections::HashMap;
+use crate::config::*;
 use std::sync::Arc;
-use vulkano::command_buffer::CommandBuffer;
+use vulkano::command_buffer::{CommandBuffer, AutoCommandBuffer, AutoCommandBufferBuilder};
+use std::sync::mpsc::*;
 
 pub struct ClientWorld {
     conn: Connection,
+    client: (Sender<ClientMessage>, Receiver<ClientMessage>),
+    device: Arc<vulkano::device::Device>,
+    queue: Arc<vulkano::device::Queue>,
     origin: Vector3<f32>,
     player: Vector3<f32>,
     pub root_size: f32,
@@ -15,21 +20,25 @@ pub struct ClientWorld {
     spaces: Vec<(usize, usize)>,                       // (start, end)
     pub tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
     upload: vulkano::buffer::CpuBufferPool<u32>,
+    config: Arc<ClientConfig>,
 }
 
 impl ClientWorld {
-    pub fn new(device: Arc<vulkano::device::Device>, conn: Connection, player: Vector3<f32>) -> Self {
-        let start_len = 3_200_000;
+    pub fn new(device: Arc<vulkano::device::Device>, queue: Arc<vulkano::device::Queue>, client: (Sender<ClientMessage>, Receiver<ClientMessage>), conn: Connection, player: Vector3<f32>, config: Arc<ClientConfig>) -> Self {
+        let start_len = 3_200_000; // = 12 MB
         let mut max_root_size = CHUNK_NUM[0] * CHUNK_NUM[1] * CHUNK_NUM[2];
         let mut last = max_root_size * 8;
         while last > 0 {
-            last = last / 8;
+            last /= 8;
             max_root_size += last;
         }
         println!("Max root size = {}", max_root_size);
 
         ClientWorld {
             conn,
+            client,
+            device: device.clone(),
+            queue,
             origin: player.map(|x| x % CHUNK_SIZE),
             player,
             root_size: 8.0,//CHUNK_NUM.max() as f32 * CHUNK_SIZE,
@@ -45,6 +54,7 @@ impl ClientWorld {
                 ..vulkano::buffer::BufferUsage::none()
             }, device.active_queue_families()).unwrap(),
             upload: vulkano::buffer::CpuBufferPool::upload(device.clone()),
+            config,
         }
     }
 
@@ -52,20 +62,34 @@ impl ClientWorld {
         self.origin.into()
     }
 
-    pub fn update(&mut self, player: Vector3<f32>, device: Arc<vulkano::device::Device>, queue: Arc<vulkano::device::Queue>, future: &mut Box<dyn GpuFuture>) {
+    pub fn run(mut self) {
+        while let Ok(m) = self.client.1.recv() {
+            match m {
+                ClientMessage::PlayerMove(x) => self.update(x),
+                ClientMessage::Done => {
+                    self.client.0.send(ClientMessage::Done);
+                    break;
+                }
+                _ => panic!("Unknown message from client thread"),
+            }
+        }
+    }
+
+    pub fn update(&mut self, player: Vector3<f32>) {
         self.player = player;
         if let Some(m) = self.conn.recv() {
             // Only load chunks once per frame
             match m {
                 Message::Chunks(chunks) => {
-                    /*
-                    println!(
-                        "Requested load of {} chunks: \n{:?}",
-                        chunks.len(),
-                        chunks.iter().map(|x| x.0).collect::<Vec<Vector3<i32>>>()
-                    );
-                    */
-                    self.load_chunks(chunks, device, queue, future)
+
+                    // println!(
+                    //     "Requested load of {} chunks: \n{:?}",
+                    //     chunks.len(),
+                    //     chunks.iter().map(|x| x.0).collect::<Vec<Vector3<i32>>>()
+                    // );
+
+                    let cmd = self.load_chunks(chunks);
+                    self.client.0.send(ClientMessage::Submit(cmd, self.origin, self.root_size)).unwrap();
                 }
                 _ => (),
             }
@@ -75,50 +99,41 @@ impl ClientWorld {
 
     /// Load a bunch of chunks at once. Prunes the root as well
     /// Uploads everything to the GPU
-    pub fn load_chunks(&mut self, chunks: Vec<(Vector3<i32>, Chunk)>, device: Arc<vulkano::device::Device>, queue: Arc<vulkano::device::Queue>, future: &mut Box<dyn GpuFuture>) {
-        let mut f: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(device.clone()));
-        std::mem::swap(&mut f, future);
-
-        f.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
-        let mut f: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(device.clone()));
+    pub fn load_chunks(&mut self, chunks: Vec<(Vector3<i32>, Chunk)>) -> AutoCommandBuffer {
+        let mut cmd = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.queue.family())
+            .unwrap();
 
         for (i, c) in chunks {
-            f = Box::new(self.load(i, c, device.clone(), queue.family()).execute_after(f, queue.clone()).unwrap());
+            cmd = self.load(i, c, cmd);
         }
 
         self.prune_chunks();
         self.create_root();
-        f = Box::new(self.upload_root(device, queue.family()).execute_after(f, queue).unwrap());
-
-        f.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+        self.upload_root(cmd)
+            .build()
+            .unwrap()
     }
 
-    pub fn upload_root(&mut self, device: Arc<vulkano::device::Device>, queue_family: vulkano::instance::QueueFamily) -> vulkano::command_buffer::AutoCommandBuffer {
+    pub fn upload_root(&mut self, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
         let chunk = self.upload.chunk(self.root.clone()).unwrap();
         let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone()).slice(0..self.root.len()).unwrap();
-        vulkano::command_buffer::AutoCommandBufferBuilder::primary_one_time_submit(device, queue_family)
-            .unwrap()
+        builder
             .copy_buffer(chunk, view)
-            .unwrap()
-            .build()
             .unwrap()
     }
 
-    fn upload_chunk(&mut self, r: std::ops::Range<usize>, data: Chunk, device: Arc<vulkano::device::Device>, queue_family: vulkano::instance::QueueFamily) -> vulkano::command_buffer::AutoCommandBuffer {
+    fn upload_chunk(&mut self, r: std::ops::Range<usize>, data: Chunk, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
         let chunk = self.upload.chunk(data.0).unwrap();
         let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone()).slice(r).unwrap();
-        vulkano::command_buffer::AutoCommandBufferBuilder::primary_one_time_submit(device, queue_family)
-            .unwrap()
+        builder
             .copy_buffer(chunk, view)
-            .unwrap()
-            .build()
             .unwrap()
     }
 
     /// Loads a chunk in at position `idx` in world-space (divided by CHUNK_SIZE)
     /// Will automatically unload the chunk that was previously there.
     /// Uploads this chunk to the GPU, but not the modified root structure.
-    pub fn load(&mut self, idx: Vector3<i32>, chunk: Chunk, device: Arc<vulkano::device::Device>, queue_family: vulkano::instance::QueueFamily) -> vulkano::command_buffer::AutoCommandBuffer {
+    pub fn load(&mut self, idx: Vector3<i32>, chunk: Chunk, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
         // Unload the previous chunk
         self.unload(idx);
 
@@ -150,8 +165,6 @@ impl ClientWorld {
             }
         };
 
-        // println!("Found a space at {}", start);
-
         // Add the 64 empty nodes here
         let mut chunk_gpu = chunk.clone();
         chunk_gpu.append(&mut vec![0; 64 * 8]);
@@ -161,7 +174,7 @@ impl ClientWorld {
         self.map.insert(idx, (start, end));
 
         // Upload to GPU
-        self.upload_chunk(start..end, chunk_gpu, device, queue_family)
+        self.upload_chunk(start..end, chunk_gpu, builder)
     }
 
     /// Unload the chunk at position `idx` in world space.
@@ -201,9 +214,7 @@ impl ClientWorld {
     /// Unloads chunks that are too far away
     fn prune_chunks(&mut self) {
         for i in self.map.clone().keys() {
-            let p = chunk_to_world(*i);
-            let d = (p - self.player).norm();
-            if d > ROOT_SIZE {
+            if (world_to_chunk(self.player) - i).map(|x| x as f32).norm() > self.config.game_config.draw_chunks as f32 {
                 self.unload(*i);
             }
         }
@@ -234,8 +245,7 @@ impl ClientWorld {
     /// Create a node in the root structure, returning that node and all children
     fn create_node(&self, pos: Vector3<f32>, size: f32, pointer: usize) -> Vec<u32> {
         let size = size * 0.5; // Child size
-        let mut ret = Vec::new();
-        ret.append(&mut vec![0; 8]); // ret[0] is the node we're actually working on
+        let mut ret = vec![0; 8]; // ret[0..8] is the node we're actually working on
         for uidx in 0..8 {
             let idx = idx_to_pos(uidx);
             let pos = pos + idx * size * 0.5;

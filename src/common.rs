@@ -126,9 +126,9 @@ pub fn radians(degrees: f32) -> f32 {
     std::f32::consts::PI / 180.0 * degrees
 }
 
-
+// These functions define the coordinate system of the world
 pub fn chunk_to_world(chunk: Vector3<i32>) -> Vector3<f32> {
-    chunk.map(|x| x as f32 * CHUNK_SIZE)
+    chunk.map(|x| (x as f32 - 0.5) * CHUNK_SIZE)
 }
 pub fn world_to_chunk(world: Vector3<f32>) -> Vector3<i32> {
     world.map(|x| (x / CHUNK_SIZE + 0.5) as i32)
@@ -192,6 +192,13 @@ pub enum ChunkMessage {
     // Chunks(Vec<(Vector3<i32>, Chunk)>),
     UnloadChunk(Vector3<i32>, Chunk),
     Players(Vec<Vector3<f32>>),
+}
+
+pub enum ClientMessage {
+    Done,
+    PlayerMove(Vector3<f32>),
+    /// CommandBuffer, origin, root_size
+    Submit(vulkano::command_buffer::AutoCommandBuffer, Vector3<f32>, f32),
 }
 
 #[cfg(test)]

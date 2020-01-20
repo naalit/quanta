@@ -7,7 +7,7 @@ use crate::camera::*;
 
 use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::buffer::CpuBufferPool;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::framebuffer::Subpass;
 use vulkano::image::{Dimensions, ImageUsage, StorageImage};
@@ -15,10 +15,12 @@ use vulkano::pipeline::{vertex::BufferlessVertices, vertex::BufferlessDefinition
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::sync::GpuFuture;
 
+use std::sync::mpsc::*;
 use std::sync::Arc;
 
 pub struct Client {
-    world: ClientWorld,
+    world: (Sender<ClientMessage>, Receiver<ClientMessage>),
+    tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
     window: Window,
     cam: Camera,
     queue: EventQueue,
@@ -26,12 +28,17 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(queue: EventQueue, conn: Connection) -> Self {
+    pub fn new(queue: EventQueue, conn: Connection, config: Arc<ClientConfig>) -> Self {
         let window = Window::new("Quanta", queue.clone());
 
         let cam = Camera::new(window.size());
 
-        let world = ClientWorld::new(window.device(), conn, Vector3::zeros());
+        let (send, r1) = channel();
+        let (s1, recv) = channel();
+
+        let world = ClientWorld::new(window.device(), window.queue.clone(), (s1, r1), conn, Vector3::zeros(), config);
+        let tree_buffer = world.tree_buffer.clone();
+        std::thread::spawn(move || world.run());
 
         let vs = crate::shaders::Vertex::load(window.device()).unwrap();
         let fs = crate::shaders::Fragment::load(window.device()).unwrap();
@@ -50,7 +57,8 @@ impl Client {
         Client {
             window,
             cam,
-            world,
+            world: (send, recv),
+            tree_buffer,
             queue,
             pipeline,
         }
@@ -61,7 +69,7 @@ impl Client {
 
         let desc = Arc::new(
             PersistentDescriptorSet::start(self.pipeline.clone(), 0)
-                .add_buffer(self.world.tree_buffer.clone())
+                .add_buffer(self.tree_buffer.clone())
                 .unwrap()
                 .build()
                 .unwrap(),
@@ -71,6 +79,9 @@ impl Client {
         let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into()];
 
         let mut timer = stopwatch::Stopwatch::start_new();
+
+        let mut origin = self.cam.pos().map(|x| x % CHUNK_SIZE);
+        let mut root_size = 0.0;
 
         let mut i = 0;
         loop {
@@ -102,7 +113,7 @@ impl Client {
                 Err(err) => panic!("{:?}", err),
             };
 
-            let pc = self.cam.push(self.world.origin(), self.world.root_size);
+            let pc = self.cam.push(origin.into(), root_size);
 
             let command_buffer =
                 AutoCommandBufferBuilder::primary_one_time_submit(self.window.device(), self.window.queue.family())
@@ -146,9 +157,23 @@ impl Client {
                 }
             }
 
+            self.world.0.send(ClientMessage::PlayerMove(self.cam.pos())).unwrap();
+            match self.world.1.try_recv() {
+                Ok(ClientMessage::Submit(cmd, o, r)) => {
+                    future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                    future = Box::new(cmd.execute(self.window.queue.clone()).unwrap());
+                    origin = o;
+                    root_size = r;
+                    future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                    future = Box::new(vulkano::sync::now(self.window.device()));
+                }
+                Err(TryRecvError::Empty) => (),
+                _ => panic!("Unknown message from client_world, or it panicked"),
+            }
+
             self.window.update();
             self.cam.update(delta);
-            self.world.update(self.cam.pos(), self.window.device(), self.window.queue.clone(), &mut future);
+            // self.world.update(self.cam.pos(), self.window.device(), self.window.queue.clone(), &mut future);
             let mut done = false;
             self.queue.clone().poll(|ev| {
                 self.cam.process(&ev);
