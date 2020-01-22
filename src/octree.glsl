@@ -171,8 +171,6 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
 
         if (old == s.idx) { // We're at the last child
             //-- POP --//
-            //continue;
-            // return true;
             #ifdef STACKLESS
 
             vec3 target = s.pos;

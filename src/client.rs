@@ -1,22 +1,27 @@
-use crate::common::*;
-use crate::client_world::*;
-use crate::config::*;
-use crate::window::*;
-use crate::event::*;
 use crate::camera::*;
+use crate::client_world::*;
+use crate::common::*;
+use crate::config::*;
+use crate::event::*;
+use crate::window::*;
 
-use vulkano::descriptor::PipelineLayoutAbstract;
-use vulkano::buffer::CpuBufferPool;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::framebuffer::Subpass;
-use vulkano::image::{Dimensions, ImageUsage, StorageImage};
-use vulkano::pipeline::{vertex::BufferlessVertices, vertex::BufferlessDefinition, GraphicsPipeline};
-use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+use vulkano::pipeline::{
+    vertex::BufferlessDefinition, vertex::BufferlessVertices, GraphicsPipeline,
+};
 use vulkano::sync::GpuFuture;
 
 use std::sync::mpsc::*;
 use std::sync::Arc;
+
+type BufferlessPipeline = GraphicsPipeline<
+    BufferlessDefinition,
+    Box<dyn PipelineLayoutAbstract + Send + Sync>,
+    Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>,
+>;
 
 pub struct Client {
     world: (Sender<ClientMessage>, Receiver<ClientMessage>),
@@ -24,7 +29,7 @@ pub struct Client {
     window: Window,
     cam: Camera,
     queue: EventQueue,
-    pipeline: Arc<GraphicsPipeline<BufferlessDefinition, Box<dyn PipelineLayoutAbstract + Send + Sync>, Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>>>,
+    pipeline: Arc<BufferlessPipeline>,
 }
 
 impl Client {
@@ -36,7 +41,14 @@ impl Client {
         let (send, r1) = channel();
         let (s1, recv) = channel();
 
-        let world = ClientWorld::new(window.device(), window.queue.clone(), (s1, r1), conn, Vector3::zeros(), config);
+        let world = ClientWorld::new(
+            window.device(),
+            window.queue.clone(),
+            (s1, r1),
+            conn,
+            Vector3::zeros(),
+            config,
+        );
         let tree_buffer = world.tree_buffer.clone();
         std::thread::spawn(move || world.run());
 
@@ -157,14 +169,28 @@ impl Client {
                 }
             }
 
-            self.world.0.send(ClientMessage::PlayerMove(self.cam.pos())).unwrap();
+            self.world
+                .0
+                .send(ClientMessage::PlayerMove(self.cam.pos()))
+                .unwrap();
             match self.world.1.try_recv() {
                 Ok(ClientMessage::Submit(cmd, o, r)) => {
-                    future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                    // This shouldn't be necessary
+                    future
+                        .then_signal_fence_and_flush()
+                        .unwrap()
+                        .wait(None)
+                        .unwrap();
                     future = Box::new(cmd.execute(self.window.queue.clone()).unwrap());
+                    // future = Box::new(future.then_execute(self.window.queue.clone(), cmd).unwrap());
                     origin = o;
                     root_size = r;
-                    future.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                    // This shouldn't be necessary either 
+                    future
+                        .then_signal_fence_and_flush()
+                        .unwrap()
+                        .wait(None)
+                        .unwrap();
                     future = Box::new(vulkano::sync::now(self.window.device()));
                 }
                 Err(TryRecvError::Empty) => (),
@@ -184,6 +210,13 @@ impl Client {
                 }
             });
             if done {
+                break;
+            }
+        }
+
+        self.world.0.send(ClientMessage::Done).unwrap();
+        while let Ok(x) = self.world.1.recv() {
+            if let ClientMessage::Done = x {
                 break;
             }
         }

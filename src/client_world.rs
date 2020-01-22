@@ -1,9 +1,8 @@
-use vulkano::sync::GpuFuture;
 use crate::common::*;
 use std::collections::HashMap;
 use crate::config::*;
 use std::sync::Arc;
-use vulkano::command_buffer::{CommandBuffer, AutoCommandBuffer, AutoCommandBufferBuilder};
+use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder};
 use std::sync::mpsc::*;
 
 pub struct ClientWorld {
@@ -26,7 +25,7 @@ pub struct ClientWorld {
 impl ClientWorld {
     pub fn new(device: Arc<vulkano::device::Device>, queue: Arc<vulkano::device::Queue>, client: (Sender<ClientMessage>, Receiver<ClientMessage>), conn: Connection, player: Vector3<f32>, config: Arc<ClientConfig>) -> Self {
         let start_len = 3_200_000; // = 12 MB
-        let mut max_root_size = CHUNK_NUM[0] * CHUNK_NUM[1] * CHUNK_NUM[2];
+        let mut max_root_size = config.game_config.draw_chunks.pow(3);
         let mut last = max_root_size * 8;
         while last > 0 {
             last /= 8;
@@ -45,7 +44,7 @@ impl ClientWorld {
             root: vec![0; 8],
             chunks: HashMap::new(),
             map: HashMap::new(),
-            spaces: vec![(max_root_size as usize, start_len)],
+            spaces: vec![(max_root_size as usize * 8, start_len)],
             tree_buffer: vulkano::buffer::DeviceLocalBuffer::array(device.clone(), start_len, vulkano::buffer::BufferUsage {
                 storage_buffer: true,
                 // This actually shouldn't have to be set, this is a bug in vulkano: https://github.com/vulkano-rs/vulkano/issues/1283
@@ -58,16 +57,18 @@ impl ClientWorld {
         }
     }
 
-    pub fn origin(&self) -> [f32; 3] {
-        self.origin.into()
-    }
-
     pub fn run(mut self) {
         while let Ok(m) = self.client.1.recv() {
             match m {
                 ClientMessage::PlayerMove(x) => self.update(x),
                 ClientMessage::Done => {
-                    self.client.0.send(ClientMessage::Done);
+                    self.conn.send(Message::Leave).expect("Disconnected from server");
+                    loop {
+                        if let Some(Message::Leave) = self.conn.recv() {
+                            break;
+                        }
+                    }
+                    self.client.0.send(ClientMessage::Done).unwrap();
                     break;
                 }
                 _ => panic!("Unknown message from client thread"),
@@ -97,8 +98,8 @@ impl ClientWorld {
         self.conn.send(Message::PlayerMove(player));
     }
 
-    /// Load a bunch of chunks at once. Prunes the root as well
-    /// Uploads everything to the GPU
+    /// Load a bunch of chunks at once. Prunes out-of-range chunks as well
+    /// Uploads everything to GPU memory, returns a command buffer to copy it to the right spots in the main buffer
     pub fn load_chunks(&mut self, chunks: Vec<(Vector3<i32>, Chunk)>) -> AutoCommandBuffer {
         let mut cmd = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.queue.family())
             .unwrap();
@@ -132,13 +133,13 @@ impl ClientWorld {
 
     /// Loads a chunk in at position `idx` in world-space (divided by CHUNK_SIZE)
     /// Will automatically unload the chunk that was previously there.
-    /// Uploads this chunk to the GPU, but not the modified root structure.
+    /// Uploads this chunk to GPU memory, and returns a command buffer to copy it to the right location.
     pub fn load(&mut self, idx: Vector3<i32>, chunk: Chunk, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
-        // Unload the previous chunk
+        // Unload the previous chunk at this location, if there was one
         self.unload(idx);
 
         // We need this much space
-        // We add 64 to allow for the chunk to grow without moving. We'll move it if it goes past 32 - TODO
+        // We add space for 64 nodes to allow for the chunk to grow without moving. We'll move it if it goes past 32 - TODO
         let size = chunk.len() + 64 * 8;
 
         // Find a space
@@ -153,6 +154,7 @@ impl ClientWorld {
             }
             if space_size > size {
                 // Our chunk fits, so we can shrink this space
+                // We'll put our new chunk at the start
                 self.spaces[i] = (space_start + size, space_end);
                 break (space_start, space_start + size);
             }
@@ -213,8 +215,9 @@ impl ClientWorld {
 
     /// Unloads chunks that are too far away
     fn prune_chunks(&mut self) {
+        let c = world_to_chunk(self.player);
         for i in self.map.clone().keys() {
-            if (world_to_chunk(self.player) - i).map(|x| x as f32).norm() > self.config.game_config.draw_chunks as f32 {
+            if (c - i).map(|x| x as f32).norm() > self.config.game_config.draw_chunks as f32 {
                 self.unload(*i);
             }
         }
@@ -235,7 +238,7 @@ impl ClientWorld {
         let h = chunk_to_world(h);
         let l = chunk_to_world(l);
 
-        self.origin = chunk_to_world(world_to_chunk((h+l)*0.5)) + Vector3::repeat(CHUNK_SIZE * 0.5);
+        self.origin = chunk_to_world(world_to_chunk((h+l)*0.5));// + Vector3::repeat(CHUNK_SIZE * 0.5);
         self.root_size = (h-l).abs().max() + CHUNK_SIZE; // Add two halves of a chunk
         self.root_size = self.root_size.log2().ceil().exp2(); // Round up to a power of 2
 
@@ -259,6 +262,9 @@ impl ClientWorld {
                 // This is a chunk, so figure out which one
                 let chunk_loc = world_to_chunk(pos);
                 let ptr = if let Some((chunk_ptr, _)) = self.map.get(&chunk_loc) {
+                    if pointer >= *chunk_ptr {
+                        panic!("pointer={}, chunk_ptr={}, chunk {}", pointer, chunk_ptr, chunk_loc);
+                    }
                     ((chunk_ptr - pointer) << 1) | 1
                 } else {
                     // There's no chunk here, it's empty

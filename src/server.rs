@@ -225,7 +225,7 @@ impl Server {
                 for z in -draw_chunks..draw_chunks {
                     let p = Vector3::new(x, y, z);
                     if p.map(|x| x as f32).norm() <= self.config.draw_chunks as f32 {
-                        to_load.push(chunk_pos + p);
+                        to_load.push(p);
                     }
                 }
             }
@@ -237,6 +237,7 @@ impl Server {
         let mut to_pass = Vec::new();
         let world = self.world.read().unwrap();
         for p in to_load {
+            let p = chunk_pos + p;
             match world.chunk(p) {
                 Some(chunk) => to_pass.push((p, chunk.clone())),
                 None => to_send.push(p),

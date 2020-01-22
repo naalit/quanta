@@ -17,7 +17,7 @@ impl Gen {
         }
     }
 
-    pub fn decorate(&self, world: &mut World, chunk: Vector3<i32>) -> Vec<Vector3<i32>> {
+    pub fn decorate(&self, _world: &mut World, _chunk: Vector3<i32>) -> Vec<Vector3<i32>> {
         // TODO port
         Vec::new()
     }
@@ -137,7 +137,7 @@ impl Gen {
     }
 */
     pub fn gen(&self, pos: Vector3<i32>) -> Chunk {
-        let start = pos.map(|x| x * CHUNK_SIZE as i32);
+        let start = chunk_to_world(pos).map(|x| (x - 0.5 * CHUNK_SIZE) as i32);
 
         let chunk_heightmap = (0..CHUNK_SIZE as usize)
             .map(move |x| {

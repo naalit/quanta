@@ -1,5 +1,5 @@
 use crate::event::*;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 
 pub struct Window {
@@ -10,7 +10,6 @@ pub struct Window {
     pub dynamic_state: vulkano::command_buffer::DynamicState,
     pub rpass: Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>,
     framebuffers: Vec<Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>>,
-    last_frame: Arc<RwLock<Box<dyn vulkano::sync::GpuFuture>>>,
     pub evloop: winit::EventsLoop,
     size: winit::dpi::PhysicalSize,
     device: Arc<vulkano::device::Device>,
@@ -99,7 +98,10 @@ impl Window {
 
             let (device, mut queues) = vulkano::device::Device::new(
                 device,
-                &vulkano::device::Features::none(),
+                &vulkano::device::Features {
+                    fragment_stores_and_atomics: true,
+                    ..vulkano::device::Features::none()
+                },
                 &vulkano::device::DeviceExtensions {
                     khr_swapchain: true,
                     khr_storage_buffer_storage_class: true,
@@ -138,7 +140,7 @@ impl Window {
                 alpha,
                 vulkano::swapchain::PresentMode::Fifo,
                 true,
-                None,
+                vulkano::swapchain::ColorSpace::SrgbNonLinear,
             )
             .unwrap()
         };
@@ -178,9 +180,6 @@ impl Window {
             dynamic_state,
             rpass,
             framebuffers,
-            last_frame: Arc::new(RwLock::new(Box::new(vulkano::sync::now(Arc::clone(
-                &device,
-            ))))),
             evloop,
             size: window
                 .get_inner_size()
@@ -297,7 +296,7 @@ impl Window {
     }
 
     fn resize(
-        device: Arc<vulkano::device::Device>,
+        _device: Arc<vulkano::device::Device>,
         images: &[Arc<vulkano::image::SwapchainImage<winit::Window>>],
         rpass: Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>,
         dynamic_state: &mut vulkano::command_buffer::DynamicState,

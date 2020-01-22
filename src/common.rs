@@ -4,12 +4,7 @@ pub use nalgebra as na;
 pub use vulkano::half::prelude::*;
 pub use num_traits::Zero;
 
-// MUST BE power of 2s
-pub const CHUNK_NUM: [u32; 3] = [8, 8, 8];
-pub const CHUNK_NUM_I: [i32; 3] = [CHUNK_NUM[0] as i32 / 2, CHUNK_NUM[1] as i32 / 2, CHUNK_NUM[2] as i32 / 2];
-
 pub const CHUNK_SIZE: f32 = 16.0;
-pub const ROOT_SIZE: f32 = 16.0 * 8.0;
 
 pub const REGION_SIZE: i32 = 2;
 
@@ -127,11 +122,13 @@ pub fn radians(degrees: f32) -> f32 {
 }
 
 // These functions define the coordinate system of the world
+
+/// Returns the center of a chunk
 pub fn chunk_to_world(chunk: Vector3<i32>) -> Vector3<f32> {
     chunk.map(|x| (x as f32 - 0.5) * CHUNK_SIZE)
 }
 pub fn world_to_chunk(world: Vector3<f32>) -> Vector3<i32> {
-    world.map(|x| (x / CHUNK_SIZE + 0.5) as i32)
+    world.map(|x| (x / CHUNK_SIZE) as i32 + 1)
 }
 
 pub fn region_to_chunk(chunk: Vector3<i32>) -> Vector3<i32> {

@@ -7,9 +7,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vulkano = "0.16"
-vulkano-win = "0.16"
-vulkano-shaders = "0.16"
+vulkano = { git="https://github.com/vulkano-rs/vulkano", rev="6ca6d84a87324c29a7415343455a6cb080b6f416" }
+vulkano-win = { git="https://github.com/vulkano-rs/vulkano", rev="6ca6d84a87324c29a7415343455a6cb080b6f416" }
+# vulkano_shaders 0.16 has a bug that was fixed in git; when >=0.16.1 comes out we can switch back to crates.io
+vulkano-shaders = { git="https://github.com/vulkano-rs/vulkano", rev="6ca6d84a87324c29a7415343455a6cb080b6f416" }
 winit = "0.19.4"
 nalgebra = "*"
 stopwatch = "*"
