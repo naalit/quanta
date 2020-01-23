@@ -1,7 +1,7 @@
 use crate::chunks::*;
 use crate::common::*;
-use crate::world::*;
 use crate::config::*;
+use crate::world::*;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc::*;
@@ -213,7 +213,10 @@ impl Server {
     /// Loads initial chunks around a player
     /// Returns `(chunks_to_wait_for, chunks_already_loaded)`
     /// Doesn't update `orders`
-    fn load_chunks_around(&mut self, pos: Vector3<f32>) -> (Vec<Vector3<i32>>, Vec<(Vector3<i32>, Chunk)>) {
+    fn load_chunks_around(
+        &mut self,
+        pos: Vector3<f32>,
+    ) -> (Vec<Vector3<i32>>, Vec<(Vector3<i32>, Chunk)>) {
         let chunk_pos = world_to_chunk(pos);
 
         let mut to_load = Vec::new();
@@ -264,7 +267,11 @@ impl Server {
     /// Figures out what chunks need to be loaded, and either returns them or sends them to the chunk thread
     /// Returns `(chunks_to_wait_for, chunks_already_loaded)`
     /// Doesn't update `orders`
-    fn load_chunk_diff(&mut self, old: Vector3<f32>, new: Vector3<f32>) -> (Vec<Vector3<i32>>, Vec<(Vector3<i32>, Chunk)>) {
+    fn load_chunk_diff(
+        &mut self,
+        old: Vector3<f32>,
+        new: Vector3<f32>,
+    ) -> (Vec<Vector3<i32>>, Vec<(Vector3<i32>, Chunk)>) {
         let chunk_old = world_to_chunk(old);
         let chunk_new = world_to_chunk(new);
 

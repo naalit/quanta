@@ -17,6 +17,8 @@ use vulkano::sync::GpuFuture;
 use std::sync::mpsc::*;
 use std::sync::Arc;
 
+const BEAM_RES_FAC: u32 = 8;
+
 type BufferlessPipeline = GraphicsPipeline<
     BufferlessDefinition,
     Box<dyn PipelineLayoutAbstract + Send + Sync>,
@@ -77,14 +79,118 @@ impl Client {
     }
 
     pub fn game_loop(mut self) {
+        use vulkano::image::{AttachmentImage, ImageUsage};
+        use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+
         let mut future: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(self.window.device()));
 
-        let desc = Arc::new(
-            PersistentDescriptorSet::start(self.pipeline.clone(), 0)
-                .add_buffer(self.tree_buffer.clone())
+        let size = [
+            self.window.size().0 as u32 / BEAM_RES_FAC,
+            self.window.size().1 as u32 / BEAM_RES_FAC,
+        ];
+
+        let viewport = vulkano::pipeline::viewport::Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [size[0] as f32, size[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+        let dynamic_state = vulkano::command_buffer::DynamicState {
+            viewports: Some(vec![viewport]),
+            ..Default::default()
+        };
+
+        let beam_image = AttachmentImage::with_usage(
+            self.window.device(),
+            size,
+            vulkano::format::R16Sfloat,
+            ImageUsage {
+                sampled: true,
+                color_attachment: true,
+                ..ImageUsage::none()
+            },
+        )
+        .unwrap();
+
+        let rpass = Arc::new(
+            vulkano::single_pass_renderpass! {
+                self.window.device(),
+                attachments: {
+                    color: {
+                        load: Clear,
+                        store: Store,
+                        format: vulkano::format::Format::R16Sfloat,
+                        samples: 1,
+                    }
+                },
+                pass: {
+                    color: [color],
+                    depth_stencil: {}
+                }
+            }
+            .unwrap(),
+        ) as Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>;
+
+        let vs = crate::shaders::Vertex::load(self.window.device()).unwrap();
+        let fs = crate::shaders::Beam::load(self.window.device()).unwrap();
+
+        let pipeline = Arc::new(
+            GraphicsPipeline::start()
+                .vertex_shader(vs.main_entry_point(), ())
+                .fragment_shader(fs.main_entry_point(), ())
+                .triangle_strip()
+                .viewports_dynamic_scissors_irrelevant(1)
+                .render_pass(Subpass::from(rpass.clone(), 0).unwrap())
+                .build(self.window.device())
+                .unwrap(),
+        );
+        let framebuffer = Arc::new(
+            vulkano::framebuffer::Framebuffer::start(Arc::clone(&rpass))
+                .add(beam_image.clone())
                 .unwrap()
                 .build()
                 .unwrap(),
+        );
+
+        let beam_desc = Arc::new(
+            PersistentDescriptorSet::start(
+                pipeline.layout().descriptor_set_layout(0).unwrap().clone(),
+            )
+            .add_buffer(self.tree_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+        );
+
+        let desc = Arc::new(
+            PersistentDescriptorSet::start(
+                self.pipeline
+                    .layout()
+                    .descriptor_set_layout(0)
+                    .unwrap()
+                    .clone(),
+            )
+            .add_buffer(self.tree_buffer.clone())
+            .unwrap()
+            .add_sampled_image(
+                beam_image,
+                Sampler::new(
+                    self.window.device(),
+                    Filter::Nearest,
+                    Filter::Nearest,
+                    MipmapMode::Nearest,
+                    SamplerAddressMode::ClampToEdge,
+                    SamplerAddressMode::ClampToEdge,
+                    SamplerAddressMode::ClampToEdge,
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .build()
+            .unwrap(),
         );
 
         let mut recreate_swapchain = false;
@@ -96,14 +202,17 @@ impl Client {
         let mut root_size = 0.0;
 
         let mut i = 0;
+        let mut tot = 0.0;
         loop {
             let delta = timer.elapsed().as_secs_f64();
+            tot += delta;
             i = (i + 1) % 30;
             if i == 0 {
                 println!(
                     "Main loop at {} Mpixels/s",
-                    self.window.size().0 * self.window.size().1 * (1.0 / delta) / 1_000_000.0
+                    self.window.size().0 * self.window.size().1 * (30.0 / tot) / 1_000_000.0
                 );
+                tot = 0.0;
                 println!("Camera at {:?}", self.cam.pos);
             }
             timer.restart();
@@ -126,32 +235,68 @@ impl Client {
             };
 
             let pc = self.cam.push(origin.into(), root_size);
+            let pc_beam = crate::shaders::BeamConstants {
+                fov: pc.fov,
+                resolution: [
+                    (pc.resolution[0] / BEAM_RES_FAC as f32).floor(),
+                    (pc.resolution[1] / BEAM_RES_FAC as f32).floor(),
+                ],
+                camera_pos: pc.camera_pos,
+                camera_dir: pc.camera_dir,
+                camera_up: pc.camera_up,
+                origin: pc.origin,
+                root_size,
+                _dummy0: pc._dummy0,
+                _dummy1: pc._dummy1,
+                _dummy2: pc._dummy2,
+            };
 
-            let command_buffer =
-                AutoCommandBufferBuilder::primary_one_time_submit(self.window.device(), self.window.queue.family())
-                    .unwrap()
-                    .begin_render_pass(frame.framebuffer, false, clear_values.clone())
-                    .unwrap()
-                    .draw(
-                        self.pipeline.clone(),
-                        &self.window.dynamic_state,
-                        BufferlessVertices {
-                            vertices: 4,
-                            instances: 1,
-                        },
-                        desc.clone(),
-                        pc,
-                    )
-                    .unwrap()
-                    .end_render_pass()
-                    .unwrap()
-                    .build()
-                    .unwrap();
+            let command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(
+                self.window.device(),
+                self.window.queue.family(),
+            )
+            .unwrap()
+            .begin_render_pass(framebuffer.clone(), false, vec![[0.0].into()])
+            .unwrap()
+            .draw(
+                pipeline.clone(),
+                &dynamic_state,
+                BufferlessVertices {
+                    vertices: 4,
+                    instances: 1,
+                },
+                beam_desc.clone(),
+                pc_beam,
+            )
+            .unwrap()
+            .end_render_pass()
+            .unwrap()
+            .begin_render_pass(frame.framebuffer, false, clear_values.clone())
+            .unwrap()
+            .draw(
+                self.pipeline.clone(),
+                &self.window.dynamic_state,
+                BufferlessVertices {
+                    vertices: 4,
+                    instances: 1,
+                },
+                desc.clone(),
+                pc,
+            )
+            .unwrap()
+            .end_render_pass()
+            .unwrap()
+            .build()
+            .unwrap();
             let f = future
                 .join(frame.acquire)
                 .then_execute(self.window.queue.clone(), command_buffer)
                 .unwrap()
-                .then_swapchain_present(self.window.queue.clone(), self.window.swapchain.clone(), frame.image_num)
+                .then_swapchain_present(
+                    self.window.queue.clone(),
+                    self.window.swapchain.clone(),
+                    frame.image_num,
+                )
                 .then_signal_fence_and_flush();
 
             match f {
@@ -185,7 +330,7 @@ impl Client {
                     // future = Box::new(future.then_execute(self.window.queue.clone(), cmd).unwrap());
                     origin = o;
                     root_size = r;
-                    // This shouldn't be necessary either 
+                    // This shouldn't be necessary either
                     future
                         .then_signal_fence_and_flush()
                         .unwrap()

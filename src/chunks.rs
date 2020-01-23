@@ -1,5 +1,5 @@
-use crate::config::GameConfig;
 use crate::common::*;
+use crate::config::GameConfig;
 use crate::terrain::*;
 use crate::world::*;
 use std::collections::HashSet;
@@ -190,10 +190,7 @@ impl ChunkThread {
                     for n in neighbors(p) {
                         if to_decorate.contains(&n) {
                             let mut world = self.world.write().unwrap();
-                            if neighbors(n)
-                                .into_iter()
-                                .all(|x| world.contains_chunk(x))
-                            {
+                            if neighbors(n).into_iter().all(|x| world.contains_chunk(x)) {
                                 let m = self.gen.decorate(&mut *world, n);
                                 modified.extend(m.into_iter().filter(|x| !s.contains(x)));
                                 ret.push(n);

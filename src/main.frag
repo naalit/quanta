@@ -19,9 +19,12 @@ layout(push_constant) uniform PushConstants {
 // Each node takes up eight consecutive slots in tree[], which correspond to the eight child pointers.
 // The first 31 bits are the pointer, the last bit is set if it's a non-leaf voxel.
 // So, an empty leaf voxel is 0.
-layout(set=0, binding=0) buffer octree_buffer {
+layout(set=0, binding=0, std430) buffer octree_buffer {
     uint tree[];
 };
+layout(set=0, binding=1) uniform sampler2D beam_image;
+
+#define MAX_ITER 256
 
 #include "sky.glsl"
 #include "octree.glsl"
@@ -81,7 +84,9 @@ vec3 shade(vec3 rd, vec3 normal, MatData mat, vec3 pos) {
 
 void main() {
   vec2 uv = frag_coord_ndc;
-  uv.y *= resolution.y / resolution.x;
+  vec4 ts = textureGather(beam_image, uv*0.5+0.5);
+  float start_t = max(0.0, min(min(ts.x, ts.y), min(ts.z, ts.w)) - 1.0);
+  uv.x *= resolution.x / resolution.y;
   // Vulkan has this backwards for us
   uv *= -1;
 
@@ -100,9 +105,7 @@ void main() {
   rd += film_width * right * uv.x;
   rd = normalize(rd);
 
-  float w = acos(dot(rd, camera_dir));
-  w = abs(dFdy(w));
-  float tanW = tan(w);
+  ro += rd * start_t;
 
   vec2 t;
   int i = 256;
@@ -114,4 +117,5 @@ void main() {
   } else {
     frag_color = vec4(sky(ro, rd), 1.0);
   }
+  // frag_color.r = float(i)/256.0;
 }

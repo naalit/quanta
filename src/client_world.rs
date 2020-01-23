@@ -1,9 +1,9 @@
 use crate::common::*;
-use std::collections::HashMap;
 use crate::config::*;
+use std::collections::HashMap;
+use std::sync::mpsc::*;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder};
-use std::sync::mpsc::*;
 
 pub struct ClientWorld {
     conn: Connection,
@@ -16,14 +16,21 @@ pub struct ClientWorld {
     pub root: Vec<u32>, // The root structure. Points to chunks, gets buffer in the map
     chunks: HashMap<Vector3<i32>, Chunk>,
     pub map: HashMap<Vector3<i32>, (usize, usize)>, // (start, end)
-    spaces: Vec<(usize, usize)>,                       // (start, end)
+    spaces: Vec<(usize, usize)>,                    // (start, end)
     pub tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
     upload: vulkano::buffer::CpuBufferPool<u32>,
     config: Arc<ClientConfig>,
 }
 
 impl ClientWorld {
-    pub fn new(device: Arc<vulkano::device::Device>, queue: Arc<vulkano::device::Queue>, client: (Sender<ClientMessage>, Receiver<ClientMessage>), conn: Connection, player: Vector3<f32>, config: Arc<ClientConfig>) -> Self {
+    pub fn new(
+        device: Arc<vulkano::device::Device>,
+        queue: Arc<vulkano::device::Queue>,
+        client: (Sender<ClientMessage>, Receiver<ClientMessage>),
+        conn: Connection,
+        player: Vector3<f32>,
+        config: Arc<ClientConfig>,
+    ) -> Self {
         let start_len = 3_200_000; // = 12 MB
         let mut max_root_size = config.game_config.draw_chunks.pow(3);
         let mut last = max_root_size * 8;
@@ -40,18 +47,24 @@ impl ClientWorld {
             queue,
             origin: player.map(|x| x % CHUNK_SIZE),
             player,
-            root_size: 8.0,//CHUNK_NUM.max() as f32 * CHUNK_SIZE,
+            root_size: 8.0, //CHUNK_NUM.max() as f32 * CHUNK_SIZE,
             root: vec![0; 8],
             chunks: HashMap::new(),
             map: HashMap::new(),
             spaces: vec![(max_root_size as usize * 8, start_len)],
-            tree_buffer: vulkano::buffer::DeviceLocalBuffer::array(device.clone(), start_len, vulkano::buffer::BufferUsage {
-                storage_buffer: true,
-                // This actually shouldn't have to be set, this is a bug in vulkano: https://github.com/vulkano-rs/vulkano/issues/1283
-                uniform_buffer: true,
-                transfer_destination: true,
-                ..vulkano::buffer::BufferUsage::none()
-            }, device.active_queue_families()).unwrap(),
+            tree_buffer: vulkano::buffer::DeviceLocalBuffer::array(
+                device.clone(),
+                start_len,
+                vulkano::buffer::BufferUsage {
+                    storage_buffer: true,
+                    // This actually shouldn't have to be set, this is a bug in vulkano: https://github.com/vulkano-rs/vulkano/issues/1283
+                    uniform_buffer: true,
+                    transfer_destination: true,
+                    ..vulkano::buffer::BufferUsage::none()
+                },
+                device.active_queue_families(),
+            )
+            .unwrap(),
             upload: vulkano::buffer::CpuBufferPool::upload(device.clone()),
             config,
         }
@@ -62,7 +75,9 @@ impl ClientWorld {
             match m {
                 ClientMessage::PlayerMove(x) => self.update(x),
                 ClientMessage::Done => {
-                    self.conn.send(Message::Leave).expect("Disconnected from server");
+                    self.conn
+                        .send(Message::Leave)
+                        .expect("Disconnected from server");
                     loop {
                         if let Some(Message::Leave) = self.conn.recv() {
                             break;
@@ -82,7 +97,6 @@ impl ClientWorld {
             // Only load chunks once per frame
             match m {
                 Message::Chunks(chunks) => {
-
                     // println!(
                     //     "Requested load of {} chunks: \n{:?}",
                     //     chunks.len(),
@@ -90,7 +104,10 @@ impl ClientWorld {
                     // );
 
                     let cmd = self.load_chunks(chunks);
-                    self.client.0.send(ClientMessage::Submit(cmd, self.origin, self.root_size)).unwrap();
+                    self.client
+                        .0
+                        .send(ClientMessage::Submit(cmd, self.origin, self.root_size))
+                        .unwrap();
                 }
                 _ => (),
             }
@@ -101,8 +118,11 @@ impl ClientWorld {
     /// Load a bunch of chunks at once. Prunes out-of-range chunks as well
     /// Uploads everything to GPU memory, returns a command buffer to copy it to the right spots in the main buffer
     pub fn load_chunks(&mut self, chunks: Vec<(Vector3<i32>, Chunk)>) -> AutoCommandBuffer {
-        let mut cmd = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.queue.family())
-            .unwrap();
+        let mut cmd = AutoCommandBufferBuilder::primary_one_time_submit(
+            self.device.clone(),
+            self.queue.family(),
+        )
+        .unwrap();
 
         for (i, c) in chunks {
             cmd = self.load(i, c, cmd);
@@ -110,31 +130,39 @@ impl ClientWorld {
 
         self.prune_chunks();
         self.create_root();
-        self.upload_root(cmd)
-            .build()
-            .unwrap()
+        self.upload_root(cmd).build().unwrap()
     }
 
     pub fn upload_root(&mut self, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
         let chunk = self.upload.chunk(self.root.clone()).unwrap();
-        let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone()).slice(0..self.root.len()).unwrap();
-        builder
-            .copy_buffer(chunk, view)
-            .unwrap()
+        let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone())
+            .slice(0..self.root.len())
+            .unwrap();
+        builder.copy_buffer(chunk, view).unwrap()
     }
 
-    fn upload_chunk(&mut self, r: std::ops::Range<usize>, data: Chunk, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+    fn upload_chunk(
+        &mut self,
+        r: std::ops::Range<usize>,
+        data: Chunk,
+        builder: AutoCommandBufferBuilder,
+    ) -> AutoCommandBufferBuilder {
         let chunk = self.upload.chunk(data.0).unwrap();
-        let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone()).slice(r).unwrap();
-        builder
-            .copy_buffer(chunk, view)
-            .unwrap()
+        let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone())
+            .slice(r)
+            .unwrap();
+        builder.copy_buffer(chunk, view).unwrap()
     }
 
     /// Loads a chunk in at position `idx` in world-space (divided by CHUNK_SIZE)
     /// Will automatically unload the chunk that was previously there.
     /// Uploads this chunk to GPU memory, and returns a command buffer to copy it to the right location.
-    pub fn load(&mut self, idx: Vector3<i32>, chunk: Chunk, builder: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+    pub fn load(
+        &mut self,
+        idx: Vector3<i32>,
+        chunk: Chunk,
+        builder: AutoCommandBufferBuilder,
+    ) -> AutoCommandBufferBuilder {
         // Unload the previous chunk at this location, if there was one
         self.unload(idx);
 
@@ -226,20 +254,24 @@ impl ClientWorld {
     /// Recreates the root node to incorporate newly loaded chunks
     fn create_root(&mut self) {
         // Find the extent of the root in each direction
-        let l = self.chunks.keys().fold(
-            Vector3::new(10_000_000, 10_000_000, 10_000_000),
-            |x, a| x.zip_map(a, i32::min),
-        );
-        let h = self.chunks.keys().fold(
-            -Vector3::new(10_000_000, 10_000_000, 10_000_000),
-            |x, a| x.zip_map(a, i32::max),
-        );
+        let l = self
+            .chunks
+            .keys()
+            .fold(Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
+                x.zip_map(a, i32::min)
+            });
+        let h = self
+            .chunks
+            .keys()
+            .fold(-Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
+                x.zip_map(a, i32::max)
+            });
 
         let h = chunk_to_world(h);
         let l = chunk_to_world(l);
 
-        self.origin = chunk_to_world(world_to_chunk((h+l)*0.5));// + Vector3::repeat(CHUNK_SIZE * 0.5);
-        self.root_size = (h-l).abs().max() + CHUNK_SIZE; // Add two halves of a chunk
+        self.origin = chunk_to_world(world_to_chunk((h + l) * 0.5)); // + Vector3::repeat(CHUNK_SIZE * 0.5);
+        self.root_size = (h - l).abs().max() + CHUNK_SIZE; // Add two halves of a chunk
         self.root_size = self.root_size.log2().ceil().exp2(); // Round up to a power of 2
 
         self.root = self.create_node(self.origin, self.root_size, 0);
@@ -255,7 +287,7 @@ impl ClientWorld {
             if size > CHUNK_SIZE {
                 // Descend
                 let ptr = ret.len(); // Relative pointer to the first of the new nodes
-                ret.append(&mut self.create_node(pos, size, pointer+ptr));
+                ret.append(&mut self.create_node(pos, size, pointer + ptr));
                 let ptr = (ptr << 1) | 1;
                 ret[uidx] = ptr as u32;
             } else {
@@ -263,7 +295,10 @@ impl ClientWorld {
                 let chunk_loc = world_to_chunk(pos);
                 let ptr = if let Some((chunk_ptr, _)) = self.map.get(&chunk_loc) {
                     if pointer >= *chunk_ptr {
-                        panic!("pointer={}, chunk_ptr={}, chunk {}", pointer, chunk_ptr, chunk_loc);
+                        panic!(
+                            "pointer={}, chunk_ptr={}, chunk {}",
+                            pointer, chunk_ptr, chunk_loc
+                        );
                     }
                     ((chunk_ptr - pointer) << 1) | 1
                 } else {

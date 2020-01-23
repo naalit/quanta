@@ -1,29 +1,28 @@
-use std::io::Write;
 use crate::config::*;
 use std::fs::File;
+use std::io::Write;
 
 use std::sync::Arc;
 
 mod camera;
 mod chunks;
-mod common;
-mod event;
-mod terrain;
-mod server;
-mod world;
-mod shaders;
-mod window;
-mod config;
-mod input;
-mod client_world;
 mod client;
+mod client_world;
+mod common;
+mod config;
+mod event;
+mod input;
+mod server;
+mod shaders;
+mod terrain;
+mod window;
+mod world;
 use common::*;
 
 pub const APP_INFO: app_dirs2::AppInfo = app_dirs2::AppInfo {
     name: "quanta",
     author: "Lorxu",
 };
-
 
 fn main() {
     let queue = event::EventQueue::new();

@@ -92,7 +92,9 @@ impl Window {
                         && q.supports_compute()
                         && surface.is_supported(q).unwrap_or(false)
                 })
-                .expect("No queue families that support graphics, compute, and drawing to the window");
+                .expect(
+                    "No queue families that support graphics, compute, and drawing to the window",
+                );
 
             let caps = surface.capabilities(device).unwrap();
 

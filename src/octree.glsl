@@ -3,8 +3,6 @@
 
 #define PRE_ITER 2
 
-#define MAX_ITER 256
-
 uint u_idx(vec3 idx) {
     return 0u
         | uint(idx.x > 0.0) << 2
@@ -74,7 +72,11 @@ uint get_voxel(in vec3 target) {
     return 0u;
 }
 
+#ifdef TAN_W
+bool trace(in vec3 ro, in vec3 rd, in float tan_w, out vec2 t, out int i, out vec3 pos) {
+#else
 bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
+#endif
     #ifndef STACKLESS
     stack_reset();
     #endif
@@ -140,24 +142,31 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
 
         uint node = tree[s.parent_pointer + uidx];
 
+        #ifdef TAN_W
+        if (s.size * 0.5 > abs(t.x) * tan_w && (node & 1u) > 0) {
+        #else
         if ((node & 1u) > 0) { // Non-leaf
+        #endif
             if (c) {
-                //-- PUSH --//
-                #ifndef STACKLESS
-                if (t.y < s.h)
-                    stack_push(s);
-                #endif
-                s.h = t.y;
-                s.parent_pointer += node >> 1;
-                s.size *= 0.5;
-                q = lessThanEqual(tmid, vec3(t.x));
-                s.idx = mix(-tstep, tstep, q);
-                tq = mix(tmid, tmax, q); // tmax of the resulting voxel
-                s.idx = mix(-s.idx, s.idx, greaterThanEqual(tq, vec3(0))); // Don't worry about voxels behind `ro`
-                s.pos += 0.5 * s.size * s.idx;
-                continue;
+              //-- PUSH --//
+              #ifndef STACKLESS
+              if (t.y < s.h)
+                  stack_push(s);
+              #endif
+              s.h = t.y;
+              s.parent_pointer += node >> 1;
+              s.size *= 0.5;
+              // Which axes we're skipping the first voxel on (hitting it from the side)
+              q = lessThanEqual(tmid, vec3(t.x));
+              s.idx = mix(-tstep, tstep, q);
+              // tmax of the resulting voxel
+              tmax = mix(tmid, tmax, q);
+              // Don't worry about voxels behind `ro`
+              s.idx = mix(-s.idx, s.idx, greaterThanEqual(tmax, vec3(0)));
+              s.pos += 0.5 * s.size * s.idx;
+              continue;
             }
-        } else if (node != 0) { // Nonempty, but leaf
+        } else if (node != 0) { // Nonempty, but either leaf, or TAN_W and it's small enough
             pos = s.pos;
             return true;
         }
@@ -185,7 +194,9 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
             float nh = t.y;
             for (int j = 0; j < 100; j++) { // J is there just in case
                 s.size *= 0.5;
-                s.idx = sign(target-s.pos+0.0001); // Add 0.0001 to avoid zeros
+                s.idx = sign(target-s.pos);
+                if (any(equal(s.idx, vec3(0.0))))
+                  break;
                 s.pos += s.idx * s.size * 0.5;
                 t = isect(ro, rdi, s.pos, s.size, tmid, tmax);
 
@@ -212,5 +223,9 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
 
     }
 
+    #ifdef TAN_W
+    return true;
+    #else
     return false;
+    #endif
 }

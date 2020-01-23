@@ -1,8 +1,8 @@
-use std::sync::mpsc::*;
 pub use na::{Point3, Vector3};
 pub use nalgebra as na;
-pub use vulkano::half::prelude::*;
 pub use num_traits::Zero;
+use std::sync::mpsc::*;
+pub use vulkano::half::prelude::*;
 
 pub const CHUNK_SIZE: f32 = 16.0;
 
@@ -43,10 +43,20 @@ impl Chunk {
 
         let mut tree: Vec<u32> = Vec::new();
         for i in 0.. {
-            let (pos, root, idx, parent, scale) =
-                if i == 0 { (Vector3::repeat(CHUNK_SIZE * 0.5), true, Vector3::zeros(), 0, 0) }
-                else if !stack.is_empty() { let s = stack.pop().unwrap(); (s.pos, false, s.idx, s.parent, s.scale) }
-                else { break };
+            let (pos, root, idx, parent, scale) = if i == 0 {
+                (
+                    Vector3::repeat(CHUNK_SIZE * 0.5),
+                    true,
+                    Vector3::zeros(),
+                    0,
+                    0,
+                )
+            } else if !stack.is_empty() {
+                let s = stack.pop().unwrap();
+                (s.pos, false, s.idx, s.parent, s.scale)
+            } else {
+                break;
+            };
 
             let mut v = vec![0; 8];
             let size = 2.0_f32.powf(-scale as f32) * CHUNK_SIZE * 0.5; // Next level's size
@@ -68,19 +78,23 @@ impl Chunk {
                     //v.leaf[j] = true;
                     v[j] = 0b10;
                 } else {
-                    stack.push(ST{parent: i*8, idx: jdx, pos: np, scale: scale+1 });
+                    stack.push(ST {
+                        parent: i * 8,
+                        idx: jdx,
+                        pos: np,
+                        scale: scale + 1,
+                    });
                 }
             }
             if !root {
                 let uidx = pos_to_idx(idx);
-                tree[parent + uidx] = (((i*8 - parent) as u32) << 1) | 1;
+                tree[parent + uidx] = (((i * 8 - parent) as u32) << 1) | 1;
             }
             tree.append(&mut v);
         }
         Chunk(tree)
     }
 }
-
 
 /// Converts between a 3D vector representing the child slot, and the actual index into the `pointer` array
 pub fn pos_to_idx<T: na::Scalar + Zero + PartialOrd>(idx: Vector3<T>) -> usize {
@@ -101,7 +115,6 @@ pub fn idx_to_pos(idx: usize) -> Vector3<f32> {
     )
 }
 
-
 pub fn neighbors(idx: Vector3<i32>) -> Vec<Vector3<i32>> {
     [
         -Vector3::x(),
@@ -115,7 +128,6 @@ pub fn neighbors(idx: Vector3<i32>) -> Vec<Vector3<i32>> {
     .map(|x| idx + x)
     .collect()
 }
-
 
 pub fn radians(degrees: f32) -> f32 {
     std::f32::consts::PI / 180.0 * degrees
@@ -141,7 +153,6 @@ pub fn in_region(chunk: Vector3<i32>) -> usize {
     let v = chunk.map(|x| ((x % REGION_SIZE) + REGION_SIZE) as usize % REGION_SIZE as usize);
     v.x + v.y * REGION_SIZE as usize + v.z * REGION_SIZE as usize * REGION_SIZE as usize
 }
-
 
 pub enum Connection {
     Local(Sender<Message>, Receiver<Message>),
@@ -195,7 +206,11 @@ pub enum ClientMessage {
     Done,
     PlayerMove(Vector3<f32>),
     /// CommandBuffer, origin, root_size
-    Submit(vulkano::command_buffer::AutoCommandBuffer, Vector3<f32>, f32),
+    Submit(
+        vulkano::command_buffer::AutoCommandBuffer,
+        Vector3<f32>,
+        f32,
+    ),
 }
 
 #[cfg(test)]
