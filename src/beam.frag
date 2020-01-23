@@ -24,7 +24,6 @@ layout(set=0, binding=0, std430) buffer octree_buffer {
 };
 
 #define TAN_W
-#define MAX_ITER 64
 #include "octree.glsl"
 
 void main() {
@@ -45,7 +44,7 @@ void main() {
   float tanW = (tan(fov*0.5) / resolution.y);
 
   vec2 t;
-  int i;
+  int i = 64;
   vec3 p;
   if (trace(ro, rd, tanW, t, i, p))
     frag_color = max(0.0, t.x);

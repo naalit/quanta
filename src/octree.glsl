@@ -75,7 +75,7 @@ uint get_voxel(in vec3 target) {
 #ifdef TAN_W
 bool trace(in vec3 ro, in vec3 rd, in float tan_w, out vec2 t, out int i, out vec3 pos) {
 #else
-bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
+bool trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
 #endif
     #ifndef STACKLESS
     stack_reset();
@@ -135,7 +135,7 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, out int i, out vec3 pos) {
     bool c = true;
     ST s = ST(parent_pointer,pos,idx,size,h);
 
-    for (i = 0; i < MAX_ITER; i++) {
+    for (; i > 0; i--) {
         t = isect(ro, rdi, s.pos, s.size, tmid, tmax);
 
         uidx = u_idx(s.idx);

@@ -1,4 +1,6 @@
 #define BEVEL 0
+#define SHADOWS 1
+#define SHADOW_ITERS 64
 
 bool map(in vec3 p) { return get_voxel(p+0.5) > 0; }
 
@@ -60,6 +62,15 @@ float ao(in vec3 vos, in vec3 nor, in vec3 pos) {
     return occ;
 }
 
+#if SHADOWS
+float shadow(in vec3 p, in vec3 sun_dir, in vec3 normal) {
+	vec2 t;
+	int i = SHADOW_ITERS;
+	vec3 pos;
+	return float(!trace(p+normal*0.01, sun_dir, t, i, pos));
+}
+#endif
+
 vec3 shade(in vec3 ro, in vec3 rd, in vec2 t, in vec3 pos) {
     vec3 p = ro+rd*t.x;
     vec3 n = p-pos;
@@ -74,9 +85,15 @@ vec3 shade(in vec3 ro, in vec3 rd, in vec2 t, in vec3 pos) {
     	(abs(n.y) > abs(n.z) ? vec3(0., 1., 0.) : vec3(0., 0., 1.)));
 #endif
 
-    vec3 light = normalize(vec3(-0.2,0.8,0.3));
+    vec3 light = normalize(vec3(0.8,0.4,0.1));
+
+#if SHADOWS
+		float sha = shadow(p, light, n);
+#else
+	  float sha = 1.0;
+#endif
 
     float occ = ao(floor(p-0.1*n), n, p);
 
-    return vec3(1.0) * max(0.0,dot(light,n)) * (0.5 * occ) + 0.2 * occ;
+    return vec3(1.0) * sha * max(0.0,dot(light,n)) * (0.5 * occ) + 0.2 * occ;
 }
