@@ -13,6 +13,9 @@ use vulkano::pipeline::{
     vertex::BufferlessDefinition, vertex::BufferlessVertices, GraphicsPipeline,
 };
 use vulkano::sync::GpuFuture;
+use vulkano::image::{AttachmentImage, ImageUsage};
+use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+use vulkano::buffer::{ImmutableBuffer, BufferUsage};
 
 use std::sync::mpsc::*;
 use std::sync::Arc;
@@ -79,11 +82,6 @@ impl Client {
     }
 
     pub fn game_loop(mut self) {
-        use vulkano::image::{AttachmentImage, ImageUsage};
-        use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
-
-        let mut future: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(self.window.device()));
-
         let size = [
             self.window.size().0 as u32 / BEAM_RES_FAC,
             self.window.size().1 as u32 / BEAM_RES_FAC,
@@ -161,6 +159,21 @@ impl Client {
             .unwrap(),
         );
 
+        let (mat_buf, future) = ImmutableBuffer::from_iter(crate::material::Material::all().into_iter(), BufferUsage {
+            storage_buffer: true,
+            ..BufferUsage::none()
+        }, self.window.queue.clone()).unwrap();
+
+        let mut future: Box<dyn GpuFuture> = Box::new(future);
+
+        // This shouldn't be necessary
+        future
+            .then_signal_fence_and_flush()
+            .unwrap()
+            .wait(None)
+            .unwrap();
+        future = Box::new(vulkano::sync::now(self.window.device()));
+
         let desc = Arc::new(
             PersistentDescriptorSet::start(
                 self.pipeline
@@ -189,6 +202,8 @@ impl Client {
                 .unwrap(),
             )
             .unwrap()
+            .add_buffer(mat_buf)
+            .unwrap()
             .build()
             .unwrap(),
         );
@@ -201,16 +216,20 @@ impl Client {
         let mut origin = self.cam.pos().map(|x| x % CHUNK_SIZE);
         let mut root_size = 0.0;
 
+        let mut time = 0.0;
         let mut i = 0;
         let mut tot = 0.0;
         loop {
             let delta = timer.elapsed().as_secs_f64();
+            time += delta;
             tot += delta;
-            i = (i + 1) % 30;
-            if i == 0 {
+            i += 1;
+            // Average FPS over last 30 frames
+            if i % 30 == 0 {
                 println!(
-                    "Main loop at {} Mpixels/s",
-                    self.window.size().0 * self.window.size().1 * (30.0 / tot) / 1_000_000.0
+                    "Main loop at {:.1} Mpixels/s ({:.1} FPS)",
+                    self.window.size().0 * self.window.size().1 * (30.0 / tot) / 1_000_000.0,
+                    (30.0 / tot)
                 );
                 tot = 0.0;
                 println!("Camera at {:?}", self.cam.pos);
@@ -234,7 +253,16 @@ impl Client {
                 Err(err) => panic!("{:?}", err),
             };
 
-            let pc = self.cam.push(origin.into(), root_size);
+            // days / second
+            let sun_speed = 1.0 / (24.0 * 60.0); // a day is 24 minutes
+            let sun_dir = Vector3::new(
+                (time * sun_speed * std::f64::consts::PI * 2.0).sin() as f32,
+                (time * sun_speed * std::f64::consts::PI * 2.0).cos() as f32,
+                0.1,
+            )
+            .normalize();
+
+            let pc = self.cam.push(origin.into(), root_size, sun_dir.into());
             let pc_beam = crate::shaders::BeamConstants {
                 fov: pc.fov,
                 resolution: [

@@ -17,6 +17,7 @@ mod shaders;
 mod terrain;
 mod window;
 mod world;
+mod material;
 use common::*;
 
 pub const APP_INFO: app_dirs2::AppInfo = app_dirs2::AppInfo {

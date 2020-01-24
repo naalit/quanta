@@ -21,3 +21,4 @@ zstd = "*"
 ron = "*"
 bincode = "*"
 serde = { version = "*", features = ["derive", "rc"] }
+enum-iterator = "*"

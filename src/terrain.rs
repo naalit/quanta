@@ -167,17 +167,15 @@ impl Gen {
         }
 
         Chunk::from_dist(|p| {
+            let f = 0.4;
+
             let height = chunk_heightmap[p.x as usize][p.z as usize];
             let y = p.y as i32 + start.y;
-            (y - height.ceil() as i32) as f32 * 0.4
-        })
 
-        /*
-        Chunk::full(&|p| {
-            let height = chunk_heightmap[p.x][p.z]; //3.0 + 4.0 * self.noise.get([(start.x as f64 + x as f64) * 0.01, (start.z as f64 + z as f64) * 0.01]) as f32;
-            let y = p.y as i32 + start.y;
-            if y == height.ceil() as i32 {
-                if y < 3 + self.noise.get([
+            let d = (y - height.ceil() as i32) as f32;
+
+            if d < 3.0 && d > 1.0 {
+                let m = if y < 3 + self.noise.get([
                     (start.x as f64 + p.x as f64) * 0.04,
                     (start.z as f64 + p.z as f64) * 0.04,
                 ]) as i32
@@ -185,17 +183,17 @@ impl Gen {
                     Material::Sand
                 } else {
                     Material::Grass
-                }
-            } else if y < height.ceil() as i32 && y > height as i32 - 3 {
-                Material::Dirt
-            } else if y < height as i32 {
-                Material::Stone
-            } else if y < 0 {
-                Material::Water
+                };
+                (d * f, m)
+            } else if d < 2.0 && d > -4.0 {
+                (d * f, Material::Dirt)
+            } else if d < 1.0 {
+                (d * f, Material::Stone)
+            } else if (y as f32) < d * f {
+                (y as f32, Material::Water)
             } else {
-                Material::Air
+                (d * f, Material::Wrong)
             }
         })
-        */
     }
 }

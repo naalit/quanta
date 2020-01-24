@@ -3,6 +3,7 @@ pub use nalgebra as na;
 pub use num_traits::Zero;
 use std::sync::mpsc::*;
 pub use vulkano::half::prelude::*;
+pub use crate::material::Material;
 
 pub const CHUNK_SIZE: f32 = 16.0;
 
@@ -29,7 +30,7 @@ impl Chunk {
         Chunk(vec![0; 8])
     }
 
-    pub fn from_dist(mut dist: impl FnMut(Vector3<f32>) -> f32) -> Self {
+    pub fn from_dist(mut dist: impl FnMut(Vector3<f32>) -> (f32, Material)) -> Self {
         struct ST {
             parent: usize,
             idx: Vector3<f32>,
@@ -64,19 +65,19 @@ impl Chunk {
                 let jdx = idx_to_pos(j);
                 let np = pos + jdx * size * 0.5;
 
-                let d = dist(np);
+                let (d, mat) = dist(np);
                 if scale >= levels {
                     if d > size * d_corner {
                         v[j] = 0;
                     } else {
-                        v[j] = 0b10;
+                        v[j] = (mat as u32) << 1;
                     }
                 } else if d > size * d_corner {
                     //v.leaf[j] = true;
                     v[j] = 0;
                 } else if d < -size * d_corner {
                     //v.leaf[j] = true;
-                    v[j] = 0b10;
+                    v[j] = (mat as u32) << 1;
                 } else {
                     stack.push(ST {
                         parent: i * 8,

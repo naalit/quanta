@@ -46,7 +46,7 @@ void main() {
   vec2 t;
   int i = 64;
   vec3 p;
-  if (trace(ro, rd, tanW, t, i, p))
+  if (trace(ro, rd, tanW, t, i, p) != 0)
     frag_color = max(0.0, t.x);
   else
     frag_color = max(0.0, t.y);

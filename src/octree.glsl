@@ -1,4 +1,4 @@
-#define STACKLESS
+//#define STACKLESS
 #define START_OUTSIDE
 
 #define PRE_ITER 2
@@ -9,6 +9,12 @@ uint u_idx(vec3 idx) {
         | uint(idx.y > 0.0) << 1
         | uint(idx.z > 0.0);
 }
+bvec3 b_idx(vec3 idx) {
+    return greaterThan(idx, vec3(0));
+}
+vec3 v_idx(bvec3 b) {
+  return vec3(b) * 2.0 - 1.0;
+}
 
 #ifndef STACKLESS
 const int MAX_LEVELS = 8;
@@ -16,7 +22,7 @@ const int MAX_LEVELS = 8;
 struct ST {
     uint parent_pointer;
     vec3 pos;
-    vec3 idx;
+    bvec3 idx;
     float size;
     float h;
 } stack[MAX_LEVELS];
@@ -30,7 +36,7 @@ bool stack_empty() { return stack_ptr == 0; }
 struct ST {
     uint parent_pointer;
     vec3 pos;
-    vec3 idx;
+    bvec3 idx;
     float size;
     float h;
 };
@@ -73,9 +79,9 @@ uint get_voxel(in vec3 target) {
 }
 
 #ifdef TAN_W
-bool trace(in vec3 ro, in vec3 rd, in float tan_w, out vec2 t, out int i, out vec3 pos) {
+uint trace(in vec3 ro, in vec3 rd, in float tan_w, out vec2 t, out int i, out vec3 pos) {
 #else
-bool trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
+uint trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
 #endif
     #ifndef STACKLESS
     stack_reset();
@@ -90,7 +96,7 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
 
     vec3 tmid, tmax;
     t = isect(ro, rdi, pos, root_size, tmid, tmax);
-    if (t.x > t.y || t.y <= 0.0) return false;// else return true;
+    if (t.x > t.y || t.y <= 0.0) return 0;// else return true;
     float h = t.y;
 
     // If the minimum is before the middle in this axis, we need to go to the first one (-rd)
@@ -133,99 +139,101 @@ bool trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
     #endif
 
     bool c = true;
-    ST s = ST(parent_pointer,pos,idx,size,h);
 
     for (; i > 0; i--) {
-        t = isect(ro, rdi, s.pos, s.size, tmid, tmax);
+        t = isect(ro, rdi, pos, size, tmid, tmax);
 
-        uidx = u_idx(s.idx);
+        uidx = u_idx(idx);
 
-        uint node = tree[s.parent_pointer + uidx];
+        uint node = tree[parent_pointer + uidx];
 
         #ifdef TAN_W
-        if (s.size * 0.5 > abs(t.x) * tan_w && (node & 1u) > 0) {
+        if (size * 0.5 > abs(t.x) * tan_w && (node & 1u) > 0) {
         #else
         if ((node & 1u) > 0) { // Non-leaf
         #endif
             if (c) {
               //-- PUSH --//
               #ifndef STACKLESS
-              if (t.y < s.h)
-                  stack_push(s);
+              if (t.y < h)
+                  stack_push(ST(parent_pointer, pos, b_idx(idx), size, h));
               #endif
-              s.h = t.y;
-              s.parent_pointer += node >> 1;
-              s.size *= 0.5;
+              h = t.y;
+              parent_pointer += node >> 1;
+              size *= 0.5;
               // Which axes we're skipping the first voxel on (hitting it from the side)
               q = lessThanEqual(tmid, vec3(t.x));
-              s.idx = mix(-tstep, tstep, q);
+              idx = mix(-tstep, tstep, q);
               // tmax of the resulting voxel
               tmax = mix(tmid, tmax, q);
               // Don't worry about voxels behind `ro`
-              s.idx = mix(-s.idx, s.idx, greaterThanEqual(tmax, vec3(0)));
-              s.pos += 0.5 * s.size * s.idx;
+              idx = mix(-idx, idx, greaterThanEqual(tmax, vec3(0)));
+              pos += 0.5 * size * idx;
               continue;
             }
-        } else if (node != 0) { // Nonempty, but either leaf, or TAN_W and it's small enough
-            pos = s.pos;
-            return true;
-        }
+        } else if (node != 0) // Nonempty, but either leaf, or TAN_W and it's small enough
+            return node >> 1;
 
         //-- ADVANCE --//
 
         // Advance for every direction where we're hitting the side
-        vec3 old = s.idx;
-        s.idx = mix(s.idx, tstep, equal(tmax, vec3(t.y)));
-        s.pos += mix(vec3(0.0), tstep, notEqual(old, s.idx)) * s.size;
+        vec3 old = idx;
+        idx = mix(idx, tstep, equal(tmax, vec3(t.y)));
+        pos += mix(vec3(0.0), tstep, notEqual(old, idx)) * size;
 
-        if (old == s.idx) { // We're at the last child
+        if (old == idx) { // We're at the last child
             //-- POP --//
             #ifdef STACKLESS
 
-            vec3 target = s.pos;
-            s.size = root_size;
-            s.pos = root_pos;
+            vec3 target = pos;
+            size = root_size;
+            pos = root_pos;
 
-            t = isect(ro,rdi,s.pos,s.size,tmid,tmax);
-            if (t.y <= s.h)
-                return false;
+            t = isect(ro, rdi, pos, size, tmid, tmax);
+            if (t.y <= h)
+                return 0;
 
-            s.parent_pointer = 0;
+            parent_pointer = 0;
             float nh = t.y;
             for (int j = 0; j < 100; j++) { // J is there just in case
-                s.size *= 0.5;
-                s.idx = sign(target-s.pos);
-                if (any(equal(s.idx, vec3(0.0))))
+                size *= 0.5;
+                idx = sign(target - pos);
+                if (any(equal(idx, vec3(0.0))))
                   break;
-                s.pos += s.idx * s.size * 0.5;
-                t = isect(ro, rdi, s.pos, s.size, tmid, tmax);
+                pos += idx * size * 0.5;
+                t = isect(ro, rdi, pos, size, tmid, tmax);
 
                 // We have more nodes to traverse within this one
-                if (t.y > s.h) {
-                    uidx = u_idx(s.idx);
-                    node = tree[s.parent_pointer + uidx];
-                    s.parent_pointer += node >> 1;
+                if (t.y > h) {
+                    uidx = u_idx(idx);
+                    node = tree[parent_pointer + uidx];
+                    parent_pointer += node >> 1;
                     nh = t.y;
                 } else break;
             }
-            s.h = nh;
+            h = nh;
 
             #else
-            if (stack_empty()) return false;
+            if (stack_empty()) return 0;
 
-            s = stack_pop();
+            ST s = stack_pop();
+            h = s.h;
+            idx = v_idx(s.idx);
+            parent_pointer = s.parent_pointer;
+            pos = s.pos;
+            size = s.size;
+
             #endif
 
             c = false;
             continue;
         }
         c = true;
-
     }
 
     #ifdef TAN_W
-    return true;
+    return 1;
     #else
-    return false;
+    return 0;
     #endif
 }

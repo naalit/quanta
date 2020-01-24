@@ -50,7 +50,7 @@ impl Camera {
         self.pos += self.dir.cross(&up).normalize() * self.moving.x * delta as f32 * MOVE_SPEED;
     }
 
-    pub fn push(&self, origin: [f32; 3], root_size: f32) -> PushConstants {
+    pub fn push(&self, origin: [f32; 3], root_size: f32, sun_dir: [f32; 3]) -> PushConstants {
         PushConstants {
             fov: self.fov,
             resolution: [self.resolution.0 as f32, self.resolution.1 as f32],
@@ -59,9 +59,11 @@ impl Camera {
             camera_up: self.up.into(),
             origin,
             root_size,
+            sun_dir,
             _dummy0: [0; 4],
             _dummy1: [0; 4],
             _dummy2: [0; 4],
+            _dummy3: [0; 4],
         }
     }
 
