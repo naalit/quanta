@@ -44,7 +44,7 @@ void main() {
   uv *= -1;
 
   // Circle in the center of the screen to show where they're pointing
-  if (length(uv) < 0.006 && length(uv) > 0.005) {
+  if (length(uv) < 0.007 && length(uv) > 0.003 && min(abs(uv.x), abs(uv.y)) > 0.002) {
       frag_color = vec4(1.0);
       return;
   }

@@ -2,7 +2,7 @@ use enum_iterator::IntoEnumIterator;
 use serde::{Deserialize, Serialize};
 use crate::shaders::MatData;
 
-#[derive(IntoEnumIterator, PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(IntoEnumIterator, PartialEq, Clone, Copy, Debug, Serialize, Deserialize, num_derive::FromPrimitive)]
 #[repr(u16)]
 pub enum Material {
     Air = 0,
@@ -98,5 +98,17 @@ impl Material {
                 nothing: 0.0,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use num_traits::FromPrimitive;
+
+    #[test]
+    fn test_from_u32() {
+        assert_eq!(Material::from_u32(0), Some(Material::Air));
+        assert_eq!(Material::from_u32(Material::Dirt as u32), Some(Material::Dirt));
     }
 }

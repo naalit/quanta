@@ -1,4 +1,4 @@
-use crate::chunks::*;
+use crate::chunk_thread::*;
 use crate::common::*;
 use crate::config::*;
 use crate::world::*;

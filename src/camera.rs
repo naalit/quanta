@@ -11,7 +11,7 @@ pub struct Camera {
     resolution: (f64, f64),
     pub pos: Point3<f32>,
     pub start: Vector3<i32>,
-    dir: Vector3<f32>,
+    pub dir: Vector3<f32>,
     up: Vector3<f32>,
     rx: f64,
     ry: f64,

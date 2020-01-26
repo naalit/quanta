@@ -5,7 +5,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 mod camera;
-mod chunks;
+mod octree;
+mod chunk_thread;
 mod client;
 mod client_world;
 mod common;

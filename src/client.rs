@@ -4,6 +4,7 @@ use crate::common::*;
 use crate::config::*;
 use crate::event::*;
 use crate::window::*;
+use crate::world::*;
 
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
@@ -29,7 +30,8 @@ type BufferlessPipeline = GraphicsPipeline<
 >;
 
 pub struct Client {
-    world: (Sender<ClientMessage>, Receiver<ClientMessage>),
+    world: ArcWorld,
+    ch: (Sender<ClientMessage>, Receiver<ClientMessage>),
     tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
     window: Window,
     cam: Camera,
@@ -46,16 +48,18 @@ impl Client {
         let (send, r1) = channel();
         let (s1, recv) = channel();
 
-        let world = ClientWorld::new(
+        let world = arcworld();
+        let c = ClientWorld::new(
             window.device(),
             window.queue.clone(),
             (s1, r1),
             conn,
             Vector3::zeros(),
+            world.clone(),
             config,
         );
-        let tree_buffer = world.tree_buffer.clone();
-        std::thread::spawn(move || world.run());
+        let tree_buffer = c.tree_buffer.clone();
+        std::thread::spawn(move || c.run());
 
         let vs = crate::shaders::Vertex::load(window.device()).unwrap();
         let fs = crate::shaders::Fragment::load(window.device()).unwrap();
@@ -72,9 +76,10 @@ impl Client {
         );
 
         Client {
+            world,
             window,
             cam,
-            world: (send, recv),
+            ch: (send, recv),
             tree_buffer,
             queue,
             pipeline,
@@ -207,6 +212,9 @@ impl Client {
             .build()
             .unwrap(),
         );
+
+        let pool = vulkano::buffer::CpuBufferPool::upload(self.window.device());
+        let mut chunk_slots = HashMap::new();
 
         let mut recreate_swapchain = false;
         let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into()];
@@ -342,12 +350,14 @@ impl Client {
                 }
             }
 
-            self.world
+            let mut did_flush = false;
+
+            self.ch
                 .0
                 .send(ClientMessage::PlayerMove(self.cam.pos()))
                 .unwrap();
-            match self.world.1.try_recv() {
-                Ok(ClientMessage::Submit(cmd, o, r)) => {
+            match self.ch.1.try_recv() {
+                Ok(ClientMessage::Submit(cmd, o, r, m)) => {
                     // This shouldn't be necessary
                     future
                         .then_signal_fence_and_flush()
@@ -358,6 +368,8 @@ impl Client {
                     // future = Box::new(future.then_execute(self.window.queue.clone(), cmd).unwrap());
                     origin = o;
                     root_size = r;
+                    chunk_slots = m;
+                    did_flush = true;
                     // This shouldn't be necessary either
                     future
                         .then_signal_fence_and_flush()
@@ -379,6 +391,42 @@ impl Client {
                 match ev {
                     Event::Resize(_, _) => recreate_swapchain = true,
                     Event::Quit => done = true,
+                    // Left-click
+                    Event::Button(1) => {
+                        println!("You clicked!");
+                        let mut world = self.world.write().unwrap();
+                        let cast = world.raycast(self.cam.pos(), self.cam.dir.map(|x| if x.abs() < 0.0001 { 0.0001 } else { x }));
+                        println!("Found {:?}", cast);
+                        if let Some(RayCast { pos, t, .. }) = cast {
+                            // let pos = self.cam.pos() + self.cam.dir * (t[0] + 0.05);
+                            println!("pos={:?} ro={:?} rd={:?}", pos, self.cam.pos(), self.cam.dir);
+                            world.set_block(pos, Material::Air);
+                            let loc = world_to_chunk(pos);
+                            let chunk = pool.chunk(world.chunk(loc).unwrap().0.clone()).unwrap();
+
+                            let slot = chunk_slots.get(&loc).unwrap();
+                            let view = vulkano::buffer::BufferSlice::from_typed_buffer_access(self.tree_buffer.clone())
+                                .slice(slot.0..slot.1)
+                                .unwrap();
+                            let cmd = AutoCommandBufferBuilder::primary(self.window.device(), self.window.queue.family()).unwrap()
+                                .copy_buffer(chunk, view)
+                                .unwrap()
+                                .build()
+                                .unwrap();
+
+                            if !did_flush {
+                                // This shouldn't be necessary
+                                let mut f: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(self.window.device()));
+                                std::mem::swap(&mut f, &mut future);
+                                f
+                                    .then_signal_fence_and_flush()
+                                    .unwrap()
+                                    .wait(None)
+                                    .unwrap();
+                            }
+                            cmd.execute(self.window.queue.clone()).unwrap().then_signal_fence_and_flush().unwrap().wait(None).unwrap();
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -387,8 +435,8 @@ impl Client {
             }
         }
 
-        self.world.0.send(ClientMessage::Done).unwrap();
-        while let Ok(x) = self.world.1.recv() {
+        self.ch.0.send(ClientMessage::Done).unwrap();
+        while let Ok(x) = self.ch.1.recv() {
             if let ClientMessage::Done = x {
                 break;
             }

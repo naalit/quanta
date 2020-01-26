@@ -35,18 +35,65 @@ impl World {
     pub fn remove_chunk(&mut self, k: Vector3<i32>) -> Option<Chunk> {
         self.chunks.remove(&k)
     }
-    // pub fn block(&self, k: Vector3<f32>) -> Option<Material> {
-    //     let chunk = world_to_chunk(k);
-    //     let in_chunk = in_chunk(k);
-    //     let chunk = self.chunks.get(&chunk)?;
-    //     Some(chunk.block(in_chunk))
-    // }
-    // pub fn set_block(&mut self, k: Vector3<f32>, v: Material) {
-    //     let chunk = world_to_chunk(k);
-    //     let in_chunk = in_chunk(k);
-    //     let chunk = self.chunks.get_mut(&chunk).unwrap();
-    //     chunk.set_block(in_chunk, v);
-    // }
+
+    pub fn block(&self, k: Vector3<f32>) -> Option<Material> {
+        let chunk = world_to_chunk(k);
+        let in_chunk = k - chunk_to_world(chunk);
+        let chunk = self.chunks.get(&chunk)?;
+        Some(chunk.block(in_chunk))
+    }
+    pub fn set_block(&mut self, k: Vector3<f32>, v: Material) {
+        let chunk = world_to_chunk(k);
+        let in_chunk = k - chunk_to_world(chunk);
+        let chunk = self.chunks.get_mut(&chunk).unwrap();
+        chunk.set_block(in_chunk, CHUNK_SIZE.log2().ceil() as u32, v);
+    }
+
+    pub fn raycast(&self, ro: Vector3<f32>, rd: Vector3<f32>) -> Option<RayCast> {
+        // Adapted from _A Fast Voxel Traversal Algorithm for Ray Tracing_ by Amanatides and Woo
+        // Basically DDA
+        let mut pos = world_to_chunk(ro);
+        // rd is m/t
+        // CHUNK_SIZE is m/chunk
+        // t/chunk
+        let tdelta = rd.map(|x| CHUNK_SIZE / x).abs();
+        let tstep = rd.map(|x| x.signum() as i32);
+        // t
+        let mut tmax = (chunk_to_world(pos) + rd.map(f32::signum) * CHUNK_SIZE * 0.5 - ro - Vector3::repeat(CHUNK_SIZE * 0.5)).zip_map(&rd, |p, r| p / r);
+
+        loop {
+            let chunk = self.chunk(pos)?;
+            if chunk[0..8] != [0;8] {
+                // return Some(RayCast {
+                //     pos: chunk_to_world(pos),
+                //     t: [tmax.min(), tmax.max()],
+                //     mat: Material::Dirt,
+                // });
+                if let Some(x) = chunk.raycast(ro - chunk_to_world(pos) + Vector3::repeat(CHUNK_SIZE * 0.5), rd, 32) {
+                    return Some(RayCast {
+                        pos: chunk_to_world(pos) + x.pos,
+                        ..x
+                    });
+                }
+            }
+
+            if tmax.x < tmax.y {
+                if tmax.x < tmax.z {
+                    tmax.x += tdelta.x;
+                    pos.x += tstep.x;
+                } else {
+                    tmax.z += tdelta.z;
+                    pos.z += tstep.z;
+                }
+            } else if tmax.y < tmax.z {
+                tmax.y += tdelta.y;
+                pos.y += tstep.y;
+            } else {
+                tmax.z += tdelta.z;
+                pos.z += tstep.z;
+            }
+        }
+    }
 }
 
 impl Extend<(Vector3<i32>, Chunk)> for World {

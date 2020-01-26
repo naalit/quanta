@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::config::*;
+use crate::world::*;
 use std::collections::HashMap;
 use std::sync::mpsc::*;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ pub struct ClientWorld {
     player: Vector3<f32>,
     pub root_size: f32,
     pub root: Vec<u32>, // The root structure. Points to chunks, gets buffer in the map
-    chunks: HashMap<Vector3<i32>, Chunk>,
+    world: ArcWorld,
     pub map: HashMap<Vector3<i32>, (usize, usize)>, // (start, end)
     spaces: Vec<(usize, usize)>,                    // (start, end)
     pub tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
@@ -29,6 +30,7 @@ impl ClientWorld {
         client: (Sender<ClientMessage>, Receiver<ClientMessage>),
         conn: Connection,
         player: Vector3<f32>,
+        world: ArcWorld,
         config: Arc<ClientConfig>,
     ) -> Self {
         let start_len = 3_200_000; // = 12 MB
@@ -49,7 +51,7 @@ impl ClientWorld {
             player,
             root_size: 8.0, //CHUNK_NUM.max() as f32 * CHUNK_SIZE,
             root: vec![0; 8],
-            chunks: HashMap::new(),
+            world,
             map: HashMap::new(),
             spaces: vec![(max_root_size as usize * 8, start_len)],
             tree_buffer: vulkano::buffer::DeviceLocalBuffer::array(
@@ -106,7 +108,7 @@ impl ClientWorld {
                     let cmd = self.load_chunks(chunks);
                     self.client
                         .0
-                        .send(ClientMessage::Submit(cmd, self.origin, self.root_size))
+                        .send(ClientMessage::Submit(cmd, self.origin, self.root_size, self.map.clone()))
                         .unwrap();
                 }
                 _ => (),
@@ -200,7 +202,7 @@ impl ClientWorld {
         chunk_gpu.append(&mut vec![0; 64 * 8]);
 
         // Add to map & chunks
-        self.chunks.insert(idx, chunk);
+        self.world.write().unwrap().add_chunk(idx, chunk);
         self.map.insert(idx, (start, end));
 
         // Upload to GPU
@@ -211,7 +213,7 @@ impl ClientWorld {
     /// This is the client function, so it won't store it anywhere or anything, that's the server's job.
     pub fn unload(&mut self, idx: Vector3<i32>) {
         if let Some((start, end)) = self.map.remove(&idx) {
-            self.chunks.remove(&idx);
+            self.world.write().unwrap().remove_chunk(idx);
 
             // Add a space
             for i in 0..self.spaces.len() {
@@ -254,17 +256,14 @@ impl ClientWorld {
     /// Recreates the root node to incorporate newly loaded chunks
     fn create_root(&mut self) {
         // Find the extent of the root in each direction
-        let l = self
-            .chunks
-            .keys()
+        let k: Vec<_> = self.world.read().unwrap().locs().cloned().collect();
+        let l = k.iter()
             .fold(Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
                 x.zip_map(a, i32::min)
             });
-        let h = self
-            .chunks
-            .keys()
+        let h = k.into_iter()
             .fold(-Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
-                x.zip_map(a, i32::max)
+                x.zip_map(&a, i32::max)
             });
 
         let h = chunk_to_world(h);
