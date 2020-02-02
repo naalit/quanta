@@ -5,7 +5,6 @@ use std::io::Write;
 use std::sync::Arc;
 
 mod camera;
-mod octree;
 mod chunk_thread;
 mod client;
 mod client_world;
@@ -13,12 +12,13 @@ mod common;
 mod config;
 mod event;
 mod input;
+mod material;
+mod octree;
 mod server;
 mod shaders;
 mod terrain;
 mod window;
 mod world;
-mod material;
 use common::*;
 
 pub const APP_INFO: app_dirs2::AppInfo = app_dirs2::AppInfo {
@@ -27,8 +27,6 @@ pub const APP_INFO: app_dirs2::AppInfo = app_dirs2::AppInfo {
 };
 
 fn main() {
-    let queue = event::EventQueue::new();
-
     let mut config_file =
         app_dirs2::app_root(app_dirs2::AppDataType::UserConfig, &APP_INFO).unwrap();
     config_file.push("config.ron");
@@ -59,6 +57,5 @@ fn main() {
         server.run();
     });
 
-    let client = client::Client::new(queue, conn_client, client_config);
-    client.game_loop();
+    event::run_client_loop(conn_client, client_config);
 }

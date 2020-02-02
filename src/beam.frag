@@ -41,7 +41,7 @@ void main() {
   rd += film_width * right * uv.x;
   rd = normalize(rd);
 
-  float tanW = (tan(fov*0.5) / resolution.y);
+  float tanW = (tan(fov) / resolution.y);
 
   vec2 t;
   int i = 64;

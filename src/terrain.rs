@@ -89,11 +89,11 @@ impl Gen {
 
                     // Trunk
                     for y in y..y + tree_height {
-                        let v = Vector3::new(x as f32, y as f32, z as f32);
-                        if world_to_chunk(v) != chunk {
-                            modified.push(world_to_chunk(v));
+                        let pos = Vector3::new(x as f32, y as f32, z as f32);
+                        if world_to_chunk(pos) != chunk {
+                            modified.push(world_to_chunk(pos));
                         }
-                        world.set_block(v, Material::Wood);
+                        world.set_block(pos, Material::Wood);
                     }
 
                     let canopy_width = (self.noise.get([
@@ -108,14 +108,14 @@ impl Gen {
                         for z in z - canopy_width..z + 1 + canopy_width {
                             for y in y + tree_height - canopy_width..y + tree_height + canopy_width
                             {
-                                let v = Vector3::new(x as f32, y as f32, z as f32);
+                                let pos = Vector3::new(x as f32, y as f32, z as f32);
 
-                                if world_to_chunk(v) != chunk {
-                                    modified.push(world_to_chunk(v));
+                                if world_to_chunk(pos) != chunk {
+                                    modified.push(world_to_chunk(pos));
                                 }
 
-                                if world.block(v) == Some(Material::Air) {
-                                    world.set_block(v, Material::Leaf);
+                                if world.block(pos) == Some(Material::Air) {
+                                    world.set_block(pos, Material::Leaf);
                                 }
                             }
                         }

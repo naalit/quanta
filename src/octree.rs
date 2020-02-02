@@ -150,6 +150,7 @@ impl Chunk {
             }
         }
 
+        println!("WARNING: ran out of iterations in Chunk::raycast()!");
         None
     }
 

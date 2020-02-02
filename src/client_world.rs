@@ -1,37 +1,83 @@
 use crate::common::*;
 use crate::config::*;
-use crate::world::*;
+use crate::event::*;
 use std::collections::HashMap;
-use std::sync::mpsc::*;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder};
 
 pub struct ClientWorld {
     conn: Connection,
-    client: (Sender<ClientMessage>, Receiver<ClientMessage>),
     device: Arc<vulkano::device::Device>,
     queue: Arc<vulkano::device::Queue>,
     origin: Vector3<f32>,
     player: Vector3<f32>,
     pub root_size: f32,
     pub root: Vec<u32>, // The root structure. Points to chunks, gets buffer in the map
-    world: ArcWorld,
     pub map: HashMap<Vector3<i32>, (usize, usize)>, // (start, end)
-    spaces: Vec<(usize, usize)>,                    // (start, end)
+    spaces: Vec<(usize, usize)>, // (start, end)
     pub tree_buffer: Arc<vulkano::buffer::DeviceLocalBuffer<[u32]>>,
     upload: vulkano::buffer::CpuBufferPool<u32>,
     config: Arc<ClientConfig>,
+    reader_id: ReaderId<Event>,
+}
+
+impl<'a> System<'a> for ClientWorld {
+    type SystemData = (
+        WriteExpect<'a, crate::world::World>,
+        Write<'a, EventChannel<Event>>,
+    );
+
+    fn run(&mut self, (mut world, mut events): Self::SystemData) {
+        let mut new_pos = None;
+        for event in events.read(&mut self.reader_id) {
+            match event {
+                Event::PlayerMove(x) => {
+                    new_pos = Some(*x);
+                }
+                Event::Quit => {
+                    self.conn
+                        .send(Message::Leave)
+                        .expect("Disconnected from server");
+                }
+                _ => (),
+            }
+        }
+        if let Some(x) = new_pos {
+            self.player = x;
+            self.conn.send(Message::PlayerMove(x));
+        }
+        if let Some(m) = self.conn.recv() {
+            // Only load chunks once per frame
+            match m {
+                Message::Chunks(chunks) => {
+                    // println!(
+                    //     "Requested load of {} chunks: \n{:?}",
+                    //     chunks.len(),
+                    //     chunks.iter().map(|x| x.0).collect::<Vec<Vector3<i32>>>()
+                    // );
+
+                    let cmd = self.load_chunks(chunks, &mut world);
+                    events.single_write(Event::Submit(Once::new((
+                        cmd,
+                        self.origin,
+                        self.root_size,
+                        self.map.clone(),
+                    ))));
+                }
+                _ => (),
+            }
+        }
+    }
 }
 
 impl ClientWorld {
     pub fn new(
         device: Arc<vulkano::device::Device>,
         queue: Arc<vulkano::device::Queue>,
-        client: (Sender<ClientMessage>, Receiver<ClientMessage>),
         conn: Connection,
         player: Vector3<f32>,
-        world: ArcWorld,
         config: Arc<ClientConfig>,
+        reader_id: ReaderId<Event>,
     ) -> Self {
         let start_len = 3_200_000; // = 12 MB
         let mut max_root_size = config.game_config.draw_chunks.pow(3);
@@ -44,14 +90,12 @@ impl ClientWorld {
 
         ClientWorld {
             conn,
-            client,
             device: device.clone(),
             queue,
             origin: player.map(|x| x % CHUNK_SIZE),
             player,
             root_size: 8.0, //CHUNK_NUM.max() as f32 * CHUNK_SIZE,
             root: vec![0; 8],
-            world,
             map: HashMap::new(),
             spaces: vec![(max_root_size as usize * 8, start_len)],
             tree_buffer: vulkano::buffer::DeviceLocalBuffer::array(
@@ -69,57 +113,17 @@ impl ClientWorld {
             .unwrap(),
             upload: vulkano::buffer::CpuBufferPool::upload(device.clone()),
             config,
+            reader_id,
         }
-    }
-
-    pub fn run(mut self) {
-        while let Ok(m) = self.client.1.recv() {
-            match m {
-                ClientMessage::PlayerMove(x) => self.update(x),
-                ClientMessage::Done => {
-                    self.conn
-                        .send(Message::Leave)
-                        .expect("Disconnected from server");
-                    loop {
-                        if let Some(Message::Leave) = self.conn.recv() {
-                            break;
-                        }
-                    }
-                    self.client.0.send(ClientMessage::Done).unwrap();
-                    break;
-                }
-                _ => panic!("Unknown message from client thread"),
-            }
-        }
-    }
-
-    pub fn update(&mut self, player: Vector3<f32>) {
-        self.player = player;
-        if let Some(m) = self.conn.recv() {
-            // Only load chunks once per frame
-            match m {
-                Message::Chunks(chunks) => {
-                    // println!(
-                    //     "Requested load of {} chunks: \n{:?}",
-                    //     chunks.len(),
-                    //     chunks.iter().map(|x| x.0).collect::<Vec<Vector3<i32>>>()
-                    // );
-
-                    let cmd = self.load_chunks(chunks);
-                    self.client
-                        .0
-                        .send(ClientMessage::Submit(cmd, self.origin, self.root_size, self.map.clone()))
-                        .unwrap();
-                }
-                _ => (),
-            }
-        }
-        self.conn.send(Message::PlayerMove(player));
     }
 
     /// Load a bunch of chunks at once. Prunes out-of-range chunks as well
     /// Uploads everything to GPU memory, returns a command buffer to copy it to the right spots in the main buffer
-    pub fn load_chunks(&mut self, chunks: Vec<(Vector3<i32>, Chunk)>) -> AutoCommandBuffer {
+    pub fn load_chunks<'a>(
+        &mut self,
+        chunks: Vec<(Vector3<i32>, Chunk)>,
+        world: &mut WriteExpect<'a, crate::world::World>,
+    ) -> AutoCommandBuffer {
         let mut cmd = AutoCommandBufferBuilder::primary_one_time_submit(
             self.device.clone(),
             self.queue.family(),
@@ -127,11 +131,11 @@ impl ClientWorld {
         .unwrap();
 
         for (i, c) in chunks {
-            cmd = self.load(i, c, cmd);
+            cmd = self.load(i, c, cmd, world);
         }
 
-        self.prune_chunks();
-        self.create_root();
+        self.prune_chunks(world);
+        self.create_root(world);
         self.upload_root(cmd).build().unwrap()
     }
 
@@ -159,14 +163,15 @@ impl ClientWorld {
     /// Loads a chunk in at position `idx` in world-space (divided by CHUNK_SIZE)
     /// Will automatically unload the chunk that was previously there.
     /// Uploads this chunk to GPU memory, and returns a command buffer to copy it to the right location.
-    pub fn load(
+    pub fn load<'a>(
         &mut self,
         idx: Vector3<i32>,
         chunk: Chunk,
         builder: AutoCommandBufferBuilder,
+        world: &mut WriteExpect<'a, crate::world::World>,
     ) -> AutoCommandBufferBuilder {
         // Unload the previous chunk at this location, if there was one
-        self.unload(idx);
+        self.unload(idx, world);
 
         // We need this much space
         // We add space for 64 nodes to allow for the chunk to grow without moving. We'll move it if it goes past 32 - TODO
@@ -202,7 +207,7 @@ impl ClientWorld {
         chunk_gpu.append(&mut vec![0; 64 * 8]);
 
         // Add to map & chunks
-        self.world.write().unwrap().add_chunk(idx, chunk);
+        world.add_chunk(idx, chunk);
         self.map.insert(idx, (start, end));
 
         // Upload to GPU
@@ -211,9 +216,13 @@ impl ClientWorld {
 
     /// Unload the chunk at position `idx` in world space.
     /// This is the client function, so it won't store it anywhere or anything, that's the server's job.
-    pub fn unload(&mut self, idx: Vector3<i32>) {
+    pub fn unload<'a>(
+        &mut self,
+        idx: Vector3<i32>,
+        world: &mut WriteExpect<'a, crate::world::World>,
+    ) {
         if let Some((start, end)) = self.map.remove(&idx) {
-            self.world.write().unwrap().remove_chunk(idx);
+            world.remove_chunk(idx);
 
             // Add a space
             for i in 0..self.spaces.len() {
@@ -244,24 +253,26 @@ impl ClientWorld {
     }
 
     /// Unloads chunks that are too far away
-    fn prune_chunks(&mut self) {
+    fn prune_chunks<'a>(&mut self, world: &mut WriteExpect<'a, crate::world::World>) {
         let c = world_to_chunk(self.player);
         for i in self.map.clone().keys() {
             if (c - i).map(|x| x as f32).norm() > self.config.game_config.draw_chunks as f32 {
-                self.unload(*i);
+                self.unload(*i, world);
             }
         }
     }
 
     /// Recreates the root node to incorporate newly loaded chunks
-    fn create_root(&mut self) {
+    fn create_root<'a>(&mut self, world: &mut WriteExpect<'a, crate::world::World>) {
         // Find the extent of the root in each direction
-        let k: Vec<_> = self.world.read().unwrap().locs().cloned().collect();
-        let l = k.iter()
+        let k: Vec<_> = world.locs().cloned().collect();
+        let l = k
+            .iter()
             .fold(Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
                 x.zip_map(a, i32::min)
             });
-        let h = k.into_iter()
+        let h = k
+            .into_iter()
             .fold(-Vector3::new(10_000_000, 10_000_000, 10_000_000), |x, a| {
                 x.zip_map(&a, i32::max)
             });

@@ -231,9 +231,5 @@ uint trace(in vec3 ro, in vec3 rd, out vec2 t, inout int i, out vec3 pos) {
         c = true;
     }
 
-    // #ifdef TAN_W
-    // return 1;
-    // #else
     return 0;
-    // #endif
 }

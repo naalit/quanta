@@ -49,7 +49,7 @@ impl World {
         chunk.set_block(in_chunk, CHUNK_SIZE.log2().ceil() as u32, v);
     }
 
-    pub fn raycast(&self, ro: Vector3<f32>, rd: Vector3<f32>) -> Option<RayCast> {
+    pub fn raycast(&self, ro: Vector3<f32>, rd: Vector3<f32>, max_t: f32) -> Option<RayCast> {
         // Adapted from _A Fast Voxel Traversal Algorithm for Ray Tracing_ by Amanatides and Woo
         // Basically DDA
         let mut pos = world_to_chunk(ro);
@@ -59,22 +59,31 @@ impl World {
         let tdelta = rd.map(|x| CHUNK_SIZE / x).abs();
         let tstep = rd.map(|x| x.signum() as i32);
         // t
-        let mut tmax = (chunk_to_world(pos) + rd.map(f32::signum) * CHUNK_SIZE * 0.5 - ro - Vector3::repeat(CHUNK_SIZE * 0.5)).zip_map(&rd, |p, r| p / r);
+        let mut tmax = (chunk_to_world(pos) + rd.map(f32::signum) * CHUNK_SIZE * 0.5
+            - ro
+            - Vector3::repeat(CHUNK_SIZE * 0.5))
+        .zip_map(&rd, |p, r| p / r);
 
         loop {
             let chunk = self.chunk(pos)?;
-            if chunk[0..8] != [0;8] {
-                // return Some(RayCast {
-                //     pos: chunk_to_world(pos),
-                //     t: [tmax.min(), tmax.max()],
-                //     mat: Material::Dirt,
-                // });
-                if let Some(x) = chunk.raycast(ro - chunk_to_world(pos) + Vector3::repeat(CHUNK_SIZE * 0.5), rd, 32) {
+            if chunk[0..8] != [0; 8] {
+                if let Some(x) = chunk.raycast(
+                    ro - chunk_to_world(pos) + Vector3::repeat(CHUNK_SIZE * 0.5),
+                    rd,
+                    64,
+                ) {
+                    if x.t[0] > max_t {
+                        return None;
+                    }
                     return Some(RayCast {
                         pos: chunk_to_world(pos) + x.pos,
                         ..x
                     });
                 }
+            }
+
+            if tmax.min() > max_t {
+                return None;
             }
 
             if tmax.x < tmax.y {

@@ -1,11 +1,14 @@
+pub use crate::material::Material;
+pub use crate::octree::*;
 pub use na::{Point3, Vector3};
 pub use nalgebra as na;
 pub use num_traits::Zero;
-use std::sync::mpsc::*;
-pub use vulkano::half::prelude::*;
-pub use crate::material::Material;
-pub use crate::octree::*;
+pub use specs::prelude::*;
+pub use specs::shrev::{EventChannel, ReaderId};
 pub use std::collections::HashMap;
+use std::sync::mpsc::*;
+use std::sync::RwLock;
+pub use vulkano::half::prelude::*;
 
 pub const CHUNK_SIZE: f32 = 16.0;
 
@@ -13,6 +16,22 @@ pub const REGION_SIZE: i32 = 4;
 
 pub fn radians(degrees: f32) -> f32 {
     std::f32::consts::PI / 180.0 * degrees
+}
+
+/// A `&Once<T>` yields a `<T>` exactly once - you can move out of the reference, but future users will get a None
+pub struct Once<T> {
+    f: RwLock<Option<T>>,
+}
+impl<T> Once<T> {
+    pub fn new(x: T) -> Self {
+        Once {
+            f: RwLock::new(Some(x)),
+        }
+    }
+
+    pub fn get(&self) -> Option<T> {
+        self.f.write().unwrap().take()
+    }
 }
 
 // These functions define the coordinate system of the world
@@ -82,18 +101,6 @@ pub enum ChunkMessage {
     // Chunks(Vec<(Vector3<i32>, Chunk)>),
     UnloadChunk(Vector3<i32>, Chunk),
     Players(Vec<Vector3<f32>>),
-}
-
-pub enum ClientMessage {
-    Done,
-    PlayerMove(Vector3<f32>),
-    /// CommandBuffer, origin, root_size
-    Submit(
-        vulkano::command_buffer::AutoCommandBuffer,
-        Vector3<f32>,
-        f32,
-        HashMap<Vector3<i32>, (usize, usize)>,
-    ),
 }
 
 #[cfg(test)]

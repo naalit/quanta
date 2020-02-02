@@ -52,7 +52,7 @@ impl Server {
             id: self.players.len(),
         };
         let (wait, load) = self.load_chunks_around(pos);
-        //p.to_send.append(&mut wait);
+
         for i in wait {
             self.orders
                 .entry(i)
@@ -148,7 +148,7 @@ impl Server {
                                                 .push((*i, c.clone()));
                                         }
                                     } else {
-                                        println!("Error!");
+                                        println!("WARNING: chunk thread told us it's loaded, but it isn't!");
                                     }
                                 }
                             }
@@ -246,7 +246,7 @@ impl Server {
                 None => to_send.push(p),
             }
             match self.refs.get_mut(&p) {
-                Some(x) => *x += 1, // This is indeed possible but ugly; see Todo below
+                Some(x) => *x += 1,
                 None => {
                     self.refs.insert(p, 1);
                 }
@@ -278,8 +278,6 @@ impl Server {
         if chunk_old == chunk_new {
             return (Vec::new(), Vec::new());
         }
-
-        // println!("Loading chunks around {:?}", new);
 
         let mut around_old = HashSet::new();
         let mut around_new = HashSet::new();
@@ -314,7 +312,6 @@ impl Server {
                 };
                 // If the refcount is zero, nobody's using it so we can unload it
                 if r == 0 {
-                    // TODO tell chunk thread to unload this chunk
                     if let Some(chunk) = world.remove_chunk(i) {
                         self.ch.0.send(ChunkMessage::UnloadChunk(i, chunk)).unwrap();
                     }
@@ -333,7 +330,7 @@ impl Server {
                 None => to_send.push(p),
             }
             match self.refs.get_mut(&p) {
-                Some(x) => *x += 1, // This is indeed possible but ugly; see Todo below
+                Some(x) => *x += 1,
                 None => {
                     self.refs.insert(p, 1);
                 }

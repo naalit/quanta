@@ -21,7 +21,7 @@ mod beam {
 
 pub use beam::ty::PushConstants as BeamConstants;
 pub use beam::Shader as Beam;
+pub use fs::ty::MatData;
 pub use fs::ty::PushConstants;
 pub use fs::Shader as Fragment;
 pub use vs::Shader as Vertex;
-pub use fs::ty::MatData;
