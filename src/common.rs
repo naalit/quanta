@@ -1,20 +1,106 @@
+pub use crate::material::Material;
+pub use crate::octree::*;
 pub use na::{Point3, Vector3};
 pub use nalgebra as na;
+pub use num_traits::Zero;
+pub use specs::prelude::*;
+pub use specs::shrev::{EventChannel, ReaderId};
+pub use std::collections::HashMap;
+use std::sync::mpsc::*;
+use std::sync::RwLock;
 pub use vulkano::half::prelude::*;
+
+pub const CHUNK_SIZE: f32 = 16.0;
+
+pub const REGION_SIZE: i32 = 4;
 
 pub fn radians(degrees: f32) -> f32 {
     std::f32::consts::PI / 180.0 * degrees
 }
 
-pub fn world_to_chunk(w: Vector3<f32>) -> Vector3<i32> {
-    let a = w.map(|w| if w < 0.0 { 1 } else { 0 });
-    w.map(|x| x as i32) / 14 - a
+/// A `&Once<T>` yields a `<T>` exactly once - you can move out of the reference, but future users will get a None
+pub struct Once<T> {
+    f: RwLock<Option<T>>,
 }
-pub fn chunk_to_world(c: Vector3<i32>) -> Vector3<f32> {
-    c.map(|x| x as f32 + 0.5) * 14.0
+impl<T> Once<T> {
+    pub fn new(x: T) -> Self {
+        Once {
+            f: RwLock::new(Some(x)),
+        }
+    }
+
+    pub fn get(&self) -> Option<T> {
+        self.f.write().unwrap().take()
+    }
 }
-pub fn pos_in_chunk(w: Vector3<f32>) -> Vector3<f32> {
-    w.map(|x| ((x % 14.0) + 14.0) % 14.0)
+
+// These functions define the coordinate system of the world
+
+/// Returns the center of a chunk
+pub fn chunk_to_world(chunk: Vector3<i32>) -> Vector3<f32> {
+    chunk.map(|x| (x as f32 + 0.5) * CHUNK_SIZE)
+}
+pub fn world_to_chunk(world: Vector3<f32>) -> Vector3<i32> {
+    world.map(|x| (x / CHUNK_SIZE).floor() as i32)
+}
+
+pub fn region_to_chunk(chunk: Vector3<i32>) -> Vector3<i32> {
+    chunk.map(|x| x * REGION_SIZE)
+}
+pub fn chunk_to_region(world: Vector3<i32>) -> Vector3<i32> {
+    world.map(|x| (x + REGION_SIZE / 2) / REGION_SIZE)
+}
+pub fn in_region(chunk: Vector3<i32>) -> usize {
+    let v = chunk.map(|x| ((x % REGION_SIZE) + REGION_SIZE) as usize % REGION_SIZE as usize);
+    v.x + v.y * REGION_SIZE as usize + v.z * REGION_SIZE as usize * REGION_SIZE as usize
+}
+
+pub enum Connection {
+    Local(Sender<Message>, Receiver<Message>),
+    // TODO some sort of buffered TCP stream inplementation of Connection
+}
+
+impl Connection {
+    /// Create a two new Local connections - (client, server)
+    pub fn local() -> (Connection, Connection) {
+        let (cto, sfrom) = channel();
+        let (sto, cfrom) = channel();
+        let client = Connection::Local(cto, cfrom);
+        let server = Connection::Local(sto, sfrom);
+        (client, server)
+    }
+
+    /// Equivalent to Sender::send() but as an option
+    pub fn send(&self, m: Message) -> Option<()> {
+        match self {
+            Connection::Local(to, _from) => to.send(m).ok(),
+        }
+    }
+
+    /// Equivalent to Receiver::try_recv() but as an option - doesn't block
+    pub fn recv(&self) -> Option<Message> {
+        match self {
+            Connection::Local(_to, from) => from.try_recv().ok(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Message {
+    PlayerMove(Vector3<f32>),
+    Chunks(Vec<(Vector3<i32>, Chunk)>),
+    //SetBlock(Vector3<i32>, Material),
+    Leave,
+}
+
+#[derive(Debug)]
+pub enum ChunkMessage {
+    Done,
+    UpdateChunks(Vec<Vector3<i32>>),
+    LoadChunks(Vec<Vector3<i32>>),
+    // Chunks(Vec<(Vector3<i32>, Chunk)>),
+    UnloadChunk(Vector3<i32>, Chunk),
+    Players(Vec<Vector3<f32>>),
 }
 
 #[cfg(test)]

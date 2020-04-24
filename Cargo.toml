@@ -7,10 +7,20 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vulkano = "0.16"
-vulkano-win = "0.16"
-vulkano-shaders = "0.16"
-winit = "0.19.4"
+vulkano = "0.18" # { git="https://github.com/vulkano-rs/vulkano", rev="c620aefd29d03bc0330a44fd2e2df8a5160e9d7c" }
+vulkano-win = "0.18" # { git="https://github.com/vulkano-rs/vulkano", rev="c620aefd29d03bc0330a44fd2e2df8a5160e9d7c" }
+# vulkano_shaders 0.16 has a bug that was fixed in git; when >=0.16.1 comes out we can switch back to crates.io
+vulkano-shaders = "0.18" # { git="https://github.com/vulkano-rs/vulkano", rev="c620aefd29d03bc0330a44fd2e2df8a5160e9d7c" }
+winit = "0.22"
 nalgebra = "*"
 stopwatch = "*"
 noise = "*"
+num-traits = "*"
+app_dirs2 = "2.0"
+zstd = "*"
+ron = "*"
+bincode = "*"
+serde = { version = "*", features = ["derive", "rc"] }
+enum-iterator = "*"
+num-derive = "*"
+specs = { version = "*", features = ["shred-derive", "parallel"] }

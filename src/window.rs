@@ -1,26 +1,23 @@
-use crate::event::*;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
+use winit::window::Window as RawWindow;
 
 pub struct Window {
-    pub swapchain: Arc<vulkano::swapchain::Swapchain<winit::Window>>,
-    images: Vec<Arc<vulkano::image::SwapchainImage<winit::Window>>>,
-    surface: Arc<vulkano::swapchain::Surface<winit::Window>>,
+    pub swapchain: Arc<vulkano::swapchain::Swapchain<RawWindow>>,
+    images: Vec<Arc<vulkano::image::SwapchainImage<RawWindow>>>,
+    surface: Arc<vulkano::swapchain::Surface<RawWindow>>,
     // TODO remove dynamic viewport (https://computergraphics.stackexchange.com/questions/5742/vulkan-best-way-of-updating-pipeline-viewport)
     pub dynamic_state: vulkano::command_buffer::DynamicState,
     pub rpass: Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>,
     framebuffers: Vec<Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>>,
-    last_frame: Arc<RwLock<Box<dyn vulkano::sync::GpuFuture>>>,
-    pub evloop: winit::EventsLoop,
-    size: winit::dpi::PhysicalSize,
+    size: winit::dpi::PhysicalSize<u32>,
     device: Arc<vulkano::device::Device>,
     pub queue: Arc<vulkano::device::Queue>,
-    event_queue: EventQueue,
 }
 
 pub struct Frame {
     pub image_num: usize,
-    pub acquire: vulkano::swapchain::SwapchainAcquireFuture<winit::Window>,
+    pub acquire: vulkano::swapchain::SwapchainAcquireFuture<winit::window::Window>,
     pub framebuffer: Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>,
 }
 
@@ -28,8 +25,10 @@ impl Window {
     pub fn device(&self) -> Arc<vulkano::device::Device> {
         Arc::clone(&self.device)
     }
+
     pub fn frame(&self) -> Result<Frame, vulkano::swapchain::AcquireError> {
-        let (image_num, acquire) =
+        // TODO do something with suboptimal
+        let (image_num, suboptimal, acquire) =
             vulkano::swapchain::acquire_next_image(Arc::clone(&self.swapchain), None)?;
         let framebuffer = Arc::clone(&self.framebuffers[image_num]);
         Ok(Frame {
@@ -38,24 +37,37 @@ impl Window {
             framebuffer,
         })
     }
-    pub fn new(title: &str, event_queue: EventQueue) -> Self {
+
+    pub fn new(title: &str) -> (Self, winit::event_loop::EventLoop<()>) {
         // We can set this to None for release builds
-        let layers = vec!["VK_LAYER_LUNARG_standard_validation"];
+        let layers = vec!["VK_LAYER_KHRONOS_validation"];
         let instance =
             vulkano::instance::Instance::new(None, &vulkano_win::required_extensions(), layers)
-                .expect("Vulkan is not available on your system!");
+                .unwrap_or_else(|x| {
+                    panic!(
+                        "Error creating instance: {}",
+                        match x {
+                            vulkano::instance::InstanceCreationError::LayerNotPresent =>
+                                "The Khronos validation layer is not present on your system"
+                                    .to_string(),
+                            x => format!("{:?}", x),
+                        }
+                    )
+                });
 
-        let evloop = winit::EventsLoop::new();
-        let surface = winit::WindowBuilder::new()
-            .with_fullscreen(Some(evloop.get_primary_monitor()))
+        let evloop = winit::event_loop::EventLoop::new();
+        let surface = winit::window::WindowBuilder::new()
+            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                evloop.primary_monitor(),
+            )))
             .with_title(title)
             .build_vk_surface(&evloop, Arc::clone(&instance))
             .unwrap();
         let window = surface.window();
-        if window.grab_cursor(true).is_err() {
+        if window.set_cursor_grab(true).is_err() {
             println!("Failed to grab cursor. If you're on wayland, try setting the environment variable WINIT_UNIX_BACKEND=x11.\nLaunching without grabbed cursor...");
         }
-        window.hide_cursor(true);
+        window.set_cursor_visible(false);
 
         // window.set_fullscreen(Some(window.get_current_monitor()));
 
@@ -93,15 +105,21 @@ impl Window {
                         && q.supports_compute()
                         && surface.is_supported(q).unwrap_or(false)
                 })
-                .expect("No queue families that support graphics, compute, and drawing to the window");
+                .expect(
+                    "No queue families that support graphics, compute, and drawing to the window",
+                );
 
             let caps = surface.capabilities(device).unwrap();
 
             let (device, mut queues) = vulkano::device::Device::new(
                 device,
-                &vulkano::device::Features::none(),
+                &vulkano::device::Features {
+                    fragment_stores_and_atomics: true,
+                    ..vulkano::device::Features::none()
+                },
                 &vulkano::device::DeviceExtensions {
                     khr_swapchain: true,
+                    khr_storage_buffer_storage_class: true,
                     ..vulkano::device::DeviceExtensions::none()
                 },
                 [(queue_family, 0.5)].iter().cloned(),
@@ -117,11 +135,7 @@ impl Window {
             let alpha = caps.supported_composite_alpha.iter().next().unwrap();
             let format = caps.supported_formats[0].0;
 
-            let size: (u32, u32) = window
-                .get_inner_size()
-                .unwrap()
-                .to_physical(window.get_hidpi_factor())
-                .into();
+            let size: (u32, u32) = window.inner_size().into();
             let size = [size.0, size.1];
             let size = caps.current_extent.unwrap_or(size);
             vulkano::swapchain::Swapchain::new(
@@ -136,8 +150,9 @@ impl Window {
                 vulkano::swapchain::SurfaceTransform::Identity,
                 alpha,
                 vulkano::swapchain::PresentMode::Fifo,
+                vulkano::swapchain::FullscreenExclusive::Allowed,
                 true,
-                None,
+                vulkano::swapchain::ColorSpace::SrgbNonLinear,
             )
             .unwrap()
         };
@@ -170,25 +185,20 @@ impl Window {
             &mut dynamic_state,
         );
 
-        Window {
-            swapchain,
-            images,
-            surface: Arc::clone(&surface),
-            dynamic_state,
-            rpass,
-            framebuffers,
-            last_frame: Arc::new(RwLock::new(Box::new(vulkano::sync::now(Arc::clone(
-                &device,
-            ))))),
+        (
+            Window {
+                swapchain,
+                images,
+                surface: Arc::clone(&surface),
+                dynamic_state,
+                rpass,
+                framebuffers,
+                size: window.inner_size(),
+                device,
+                queue,
+            },
             evloop,
-            size: window
-                .get_inner_size()
-                .unwrap()
-                .to_physical(window.get_hidpi_factor()),
-            device,
-            queue,
-            event_queue,
-        }
+        )
     }
 
     pub fn size(&self) -> (f64, f64) {
@@ -197,15 +207,10 @@ impl Window {
 
     /// Returns whether to render this frame. `continue` if it returns false
     pub fn recreate(&mut self) -> bool {
-        self.size = self
-            .surface
-            .window()
-            .get_inner_size()
-            .unwrap()
-            .to_physical(self.surface.window().get_hidpi_factor());
+        self.size = self.surface.window().inner_size();
         let size = self.size();
         let size = [size.0 as u32, size.1 as u32];
-        let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimension(size) {
+        let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimensions(size) {
             Ok(r) => r,
             // Apparently this error sometimes happens when the window is being resized, just try again
             Err(vulkano::swapchain::SwapchainCreationError::UnsupportedDimensions) => return false,
@@ -222,82 +227,9 @@ impl Window {
         true
     }
 
-    pub fn update(&mut self) {
-        let mut ret = true;
-        let mut resize = None;
-        let mut device_events = Vec::new();
-        self.evloop.poll_events(|event| {
-            // println!("EVENT: {:?}", event);
-            match event {
-                winit::Event::WindowEvent {
-                    event: winit::WindowEvent::Resized(size),
-                    ..
-                } => {
-                    // println!("RESIZE");
-                    resize = Some(size);
-                }
-                winit::Event::WindowEvent {
-                    event: winit::WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    ret = false;
-                }
-                winit::Event::DeviceEvent { event, .. } => {
-                    // println!("Device event_a: {:?}", event);
-                    device_events.push(event);
-                }
-                _ => {}
-            }
-        });
-
-        for event in device_events {
-            // println!("Device event: {:?}", event);
-            match event {
-                winit::DeviceEvent::MouseMotion { delta } => {
-                    self.event_queue.push(Event::Mouse(delta.0, delta.1));
-                }
-                winit::DeviceEvent::Key(winit::KeyboardInput {
-                    scancode,
-                    state: winit::ElementState::Pressed,
-                    ..
-                }) => {
-                    self.event_queue.push(Event::KeyPressed(scancode));
-                }
-                winit::DeviceEvent::Key(winit::KeyboardInput {
-                    scancode,
-                    state: winit::ElementState::Released,
-                    ..
-                }) => {
-                    self.event_queue.push(Event::KeyReleased(scancode));
-                }
-                winit::DeviceEvent::Button {
-                    state: winit::ElementState::Pressed,
-                    button,
-                } => {
-                    self.event_queue.push(Event::Button(button));
-                }
-                _ => {}
-            }
-        }
-        // Keep the cursor in the window
-        self.surface
-            .window()
-            .set_cursor_position(winit::dpi::LogicalPosition::new(0.0, 0.0))
-            .unwrap();
-
-        if let Some(size) = resize {
-            let size = size.to_physical(self.surface.window().get_hidpi_factor());
-            self.event_queue
-                .push(Event::Resize(size.width, size.height));
-        }
-        if !ret {
-            self.event_queue.push(Event::Quit);
-        }
-    }
-
     fn resize(
-        device: Arc<vulkano::device::Device>,
-        images: &[Arc<vulkano::image::SwapchainImage<winit::Window>>],
+        _device: Arc<vulkano::device::Device>,
+        images: &[Arc<vulkano::image::SwapchainImage<RawWindow>>],
         rpass: Arc<dyn vulkano::framebuffer::RenderPassAbstract + Send + Sync>,
         dynamic_state: &mut vulkano::command_buffer::DynamicState,
     ) -> Vec<Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>> {

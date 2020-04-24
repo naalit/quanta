@@ -11,7 +11,7 @@ pub struct Camera {
     resolution: (f64, f64),
     pub pos: Point3<f32>,
     pub start: Vector3<i32>,
-    dir: Vector3<f32>,
+    pub dir: Vector3<f32>,
     up: Vector3<f32>,
     rx: f64,
     ry: f64,
@@ -38,6 +38,10 @@ impl Camera {
         }
     }
 
+    pub fn pos(&self) -> Vector3<f32> {
+        Vector3::new(self.pos.x, self.pos.y, self.pos.z)
+    }
+
     pub fn update(&mut self, delta: f64) {
         // self.up is the CAMERA up, but jumping moves up in the WORLD
         let up = Vector3::y();
@@ -46,14 +50,16 @@ impl Camera {
         self.pos += self.dir.cross(&up).normalize() * self.moving.x * delta as f32 * MOVE_SPEED;
     }
 
-    pub fn push(&self) -> PushConstants {
+    pub fn push(&self, origin: [f32; 3], root_size: f32, sun_dir: [f32; 3]) -> PushConstants {
         PushConstants {
             fov: self.fov,
             resolution: [self.resolution.0 as f32, self.resolution.1 as f32],
             camera_pos: [self.pos.x, self.pos.y, self.pos.z],
             camera_dir: self.dir.into(),
             camera_up: self.up.into(),
-            start: self.start.into(),
+            origin,
+            root_size,
+            sun_dir,
             _dummy0: [0; 4],
             _dummy1: [0; 4],
             _dummy2: [0; 4],
