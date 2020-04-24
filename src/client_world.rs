@@ -103,8 +103,6 @@ impl ClientWorld {
                 start_len,
                 vulkano::buffer::BufferUsage {
                     storage_buffer: true,
-                    // This actually shouldn't have to be set, this is a bug in vulkano: https://github.com/vulkano-rs/vulkano/issues/1283
-                    uniform_buffer: true,
                     transfer_destination: true,
                     ..vulkano::buffer::BufferUsage::none()
                 },

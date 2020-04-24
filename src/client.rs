@@ -210,7 +210,7 @@ impl<'a> System<'a> for Client {
                     std::mem::swap(&mut f, &mut self.future);
                     f.then_signal_fence_and_flush().unwrap().wait(None).unwrap();
                     self.future = Box::new(cmd.execute(win.queue.clone()).unwrap());
-                    // future = Box::new(future.then_execute(self.window.queue.clone(), cmd).unwrap());
+                    // self.future = Box::new(f.then_execute(win.queue.clone(), cmd).unwrap());
 
                     self.origin = origin;
                     self.root_size = root_size;
@@ -390,12 +390,12 @@ impl Client {
         let mut future: Box<dyn GpuFuture + Send + Sync> = Box::new(future);
 
         // This shouldn't be necessary
-        future
-            .then_signal_fence_and_flush()
-            .unwrap()
-            .wait(None)
-            .unwrap();
-        future = Box::new(vulkano::sync::now(window.device()));
+        // future
+        //     .then_signal_fence_and_flush()
+        //     .unwrap()
+        //     .wait(None)
+        //     .unwrap();
+        // future = Box::new(vulkano::sync::now(window.device()));
 
         let desc = Arc::new(
             PersistentDescriptorSet::start(

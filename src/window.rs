@@ -40,10 +40,20 @@ impl Window {
 
     pub fn new(title: &str) -> (Self, winit::event_loop::EventLoop<()>) {
         // We can set this to None for release builds
-        let layers = vec!["VK_LAYER_LUNARG_standard_validation"];
+        let layers = vec!["VK_LAYER_KHRONOS_validation"];
         let instance =
             vulkano::instance::Instance::new(None, &vulkano_win::required_extensions(), layers)
-                .expect("Vulkan is not available on your system!");
+                .unwrap_or_else(|x| {
+                    panic!(
+                        "Error creating instance: {}",
+                        match x {
+                            vulkano::instance::InstanceCreationError::LayerNotPresent =>
+                                "The Khronos validation layer is not present on your system"
+                                    .to_string(),
+                            x => format!("{:?}", x),
+                        }
+                    )
+                });
 
         let evloop = winit::event_loop::EventLoop::new();
         let surface = winit::window::WindowBuilder::new()
@@ -140,6 +150,7 @@ impl Window {
                 vulkano::swapchain::SurfaceTransform::Identity,
                 alpha,
                 vulkano::swapchain::PresentMode::Fifo,
+                vulkano::swapchain::FullscreenExclusive::Allowed,
                 true,
                 vulkano::swapchain::ColorSpace::SrgbNonLinear,
             )
